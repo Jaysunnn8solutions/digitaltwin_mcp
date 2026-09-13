@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-09-13T18:10:46.514Z",
+  "candystore": {
+    "source": "https://candystore-mcp.vercel.app/api/market",
+    "fetchedAt": "2026-09-13T18:10:46.472Z"
+  },
+  "counts": {
+    "dcs": 2,
+    "stores": 5,
+    "skus": 281,
+    "suppliers": 11,
+    "workers": 7
+  },
+  "seeds": {
+    "catalog": 20260913,
+    "roster": 44
+  }
+}

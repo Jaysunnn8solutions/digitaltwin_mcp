@@ -1,0 +1,26 @@
+[
+  {
+    "id": "dc-west",
+    "building": { "widthFt": 240, "depthFt": 200 },
+    "doors": { "inbound": 2, "outbound": 2 },
+    "equipment": { "forklifts": 1, "palletJacks": 2 },
+    "reserve": { "originX": 20, "originY": 70, "aisles": 4, "baysPerSide": 10, "levels": 4, "bayWidthFt": 9, "aisleWidthFt": 11, "rackDepthFt": 4 },
+    "pick": { "originX": 130, "originY": 70, "aisles": 4, "baysPerSide": 10, "levels": 4, "slotsPerBay": 1, "bayWidthFt": 8, "aisleWidthFt": 6, "rackDepthFt": 2, "faceCases": 3 },
+    "deliveryDays": { "general": [1, 3, 5], "specialty": [2, 5] },
+    "times": { "orderRelease": "17:00", "truckDeparture": "14:00", "inboundWindow": ["07:00", "12:00"] },
+    "shifts": [{ "id": "day", "start": "06:00", "end": "14:30", "breakMin": 30, "indirectMin": 30 }],
+    "operatingDays": [1, 2, 3, 4, 5]
+  },
+  {
+    "id": "dc-east",
+    "building": { "widthFt": 300, "depthFt": 230 },
+    "doors": { "inbound": 2, "outbound": 3 },
+    "equipment": { "forklifts": 2, "palletJacks": 3 },
+    "reserve": { "originX": 20, "originY": 70, "aisles": 6, "baysPerSide": 12, "levels": 4, "bayWidthFt": 9, "aisleWidthFt": 11, "rackDepthFt": 4 },
+    "pick": { "originX": 170, "originY": 70, "aisles": 5, "baysPerSide": 10, "levels": 4, "slotsPerBay": 1, "bayWidthFt": 8, "aisleWidthFt": 6, "rackDepthFt": 2, "faceCases": 3 },
+    "deliveryDays": { "general": [1, 3, 5], "specialty": [2, 5] },
+    "times": { "orderRelease": "17:00", "truckDeparture": "14:00", "inboundWindow": ["07:00", "12:00"] },
+    "shifts": [{ "id": "day", "start": "06:00", "end": "14:30", "breakMin": 30, "indirectMin": 30 }],
+    "operatingDays": [1, 2, 3, 4, 5]
+  }
+]

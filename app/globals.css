@@ -1,0 +1,158 @@
+:root {
+  --bg: #f7f6f2;
+  --panel: #ffffff;
+  --text: #1d1d1b;
+  --muted: #5f5e58;
+  --line: #dedbd2;
+  --accent: #d9480f;
+  --floor-bg: #fbfaf6;
+  --floor-line: #4a4944;
+  --floor-text: #3a3935;
+  --rack: #cfc9bb;
+  --inbound: #2f9e44;
+  --outbound: #d9480f;
+  --code-bg: #efede6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151514;
+    --panel: #1e1e1c;
+    --text: #ecebe6;
+    --muted: #a3a29b;
+    --line: #34332f;
+    --floor-bg: #22221f;
+    --floor-line: #9a988f;
+    --floor-text: #d6d4cc;
+    --rack: #4b4841;
+    --code-bg: #2a2926;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 20px 64px;
+}
+
+h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 19px;
+  margin: 0 0 4px;
+}
+
+h3 {
+  font-size: 15px;
+  margin: 28px 0 8px;
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+.lede {
+  color: var(--muted);
+  max-width: 760px;
+  font-size: 16px;
+}
+
+code,
+pre {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 13px;
+}
+
+pre {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 6px 0 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tile {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.tile b {
+  display: block;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tools {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 6px 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.tools li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tools code {
+  font-weight: 600;
+}
+
+a {
+  color: var(--accent);
+}
+
+footer {
+  margin-top: 36px;
+  color: var(--muted);
+  font-size: 13px;
+}

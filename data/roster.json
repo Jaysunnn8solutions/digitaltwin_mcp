@@ -1,0 +1,113 @@
+{
+  "generatedAt": "2026-09-13T18:10:46.514Z",
+  "seed": 44,
+  "workers": [
+    {
+      "id": "W-W-001",
+      "dc": "dc-west",
+      "role": "Shift lead",
+      "type": "full-time",
+      "homeShift": "day",
+      "skills": [
+        "receive",
+        "forklift",
+        "pick",
+        "pack",
+        "load"
+      ],
+      "productivity": 1.07,
+      "hourlyRate": 24.25,
+      "maxWeeklyHours": 40
+    },
+    {
+      "id": "W-W-002",
+      "dc": "dc-west",
+      "role": "Forklift operator",
+      "type": "full-time",
+      "homeShift": "day",
+      "skills": [
+        "forklift",
+        "receive",
+        "load"
+      ],
+      "productivity": 0.92,
+      "hourlyRate": 22.5,
+      "maxWeeklyHours": 40
+    },
+    {
+      "id": "W-W-003",
+      "dc": "dc-west",
+      "role": "Order selector",
+      "type": "part-time",
+      "homeShift": "day",
+      "skills": [
+        "pick",
+        "pack"
+      ],
+      "productivity": 1.03,
+      "hourlyRate": 18.5,
+      "maxWeeklyHours": 24
+    },
+    {
+      "id": "W-E-001",
+      "dc": "dc-east",
+      "role": "Shift lead",
+      "type": "full-time",
+      "homeShift": "day",
+      "skills": [
+        "receive",
+        "forklift",
+        "pick",
+        "pack",
+        "load"
+      ],
+      "productivity": 1.01,
+      "hourlyRate": 24.75,
+      "maxWeeklyHours": 40
+    },
+    {
+      "id": "W-E-002",
+      "dc": "dc-east",
+      "role": "Forklift operator",
+      "type": "full-time",
+      "homeShift": "day",
+      "skills": [
+        "forklift",
+        "receive",
+        "load"
+      ],
+      "productivity": 1.02,
+      "hourlyRate": 22.5,
+      "maxWeeklyHours": 40
+    },
+    {
+      "id": "W-E-003",
+      "dc": "dc-east",
+      "role": "Order selector",
+      "type": "full-time",
+      "homeShift": "day",
+      "skills": [
+        "pick",
+        "pack"
+      ],
+      "productivity": 0.96,
+      "hourlyRate": 17.5,
+      "maxWeeklyHours": 40
+    },
+    {
+      "id": "W-E-004",
+      "dc": "dc-east",
+      "role": "Loader",
+      "type": "part-time",
+      "homeShift": "day",
+      "skills": [
+        "load",
+        "pack",
+        "pick"
+      ],
+      "productivity": 1.09,
+      "hourlyRate": 19.75,
+      "maxWeeklyHours": 24
+    }
+  ]
+}

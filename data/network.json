@@ -1,0 +1,152 @@
+{
+  "source": "https://candystore-mcp.vercel.app/api/market",
+  "fetchedAt": "2026-09-13T18:10:46.472Z",
+  "scenario": {},
+  "dcs": [
+    {
+      "id": "dc-west",
+      "name": "Fulton Industrial DC",
+      "lon": -84.55,
+      "lat": 33.78,
+      "capacity": {
+        "traditional": 320000,
+        "specialty:latam": 9000,
+        "specialty:caribbean": 3000,
+        "specialty:eastasia": 6000,
+        "specialty:southasia": 4000,
+        "specialty:mideast": 2500,
+        "specialty:africa": 3000,
+        "specialty:easteurope": 2000
+      },
+      "weeklyDemand": {
+        "traditional": 104489.77
+      },
+      "stores": [
+        "s1",
+        "s3"
+      ]
+    },
+    {
+      "id": "dc-east",
+      "name": "Norcross DC",
+      "lon": -84.2,
+      "lat": 33.94,
+      "capacity": {
+        "traditional": 320000,
+        "specialty:latam": 16000,
+        "specialty:caribbean": 4000,
+        "specialty:eastasia": 18000,
+        "specialty:southasia": 12000,
+        "specialty:mideast": 5000,
+        "specialty:africa": 5000,
+        "specialty:easteurope": 3000
+      },
+      "weeklyDemand": {
+        "traditional": 193237.97,
+        "specialty:latam": 12472.17,
+        "specialty:eastasia": 695.96
+      },
+      "stores": [
+        "s2",
+        "s4",
+        "s5"
+      ]
+    }
+  ],
+  "stores": [
+    {
+      "id": "s1",
+      "name": "Midtown Sweets",
+      "type": "general",
+      "dc": "dc-west",
+      "lon": -84.383,
+      "lat": 33.7816,
+      "segments": [],
+      "revenueBy": {
+        "traditional": 3010378.1
+      }
+    },
+    {
+      "id": "s2",
+      "name": "Decatur Square Candy",
+      "type": "general",
+      "dc": "dc-east",
+      "lon": -84.2963,
+      "lat": 33.7748,
+      "segments": [],
+      "revenueBy": {
+        "traditional": 4263485.59
+      }
+    },
+    {
+      "id": "s3",
+      "name": "Marietta Square Confections",
+      "type": "general",
+      "dc": "dc-west",
+      "lon": -84.5499,
+      "lat": 33.9526,
+      "segments": [],
+      "revenueBy": {
+        "traditional": 2423089.78
+      }
+    },
+    {
+      "id": "s4",
+      "name": "Avalon Candy Co.",
+      "type": "general",
+      "dc": "dc-east",
+      "lon": -84.281,
+      "lat": 34.0716,
+      "segments": [],
+      "revenueBy": {
+        "traditional": 5784888.75
+      }
+    },
+    {
+      "id": "s5",
+      "name": "Buford Highway World Sweets",
+      "type": "specialty",
+      "dc": "dc-east",
+      "lon": -84.275,
+      "lat": 33.888,
+      "segments": [
+        "eastasia",
+        "latam"
+      ],
+      "revenueBy": {
+        "specialty:latam": 648552.61,
+        "specialty:eastasia": 36189.68
+      }
+    }
+  ],
+  "segments": [
+    {
+      "id": "latam",
+      "label": "Latin American"
+    },
+    {
+      "id": "caribbean",
+      "label": "Caribbean"
+    },
+    {
+      "id": "eastasia",
+      "label": "East and Southeast Asian"
+    },
+    {
+      "id": "southasia",
+      "label": "South Asian"
+    },
+    {
+      "id": "mideast",
+      "label": "Middle Eastern and North African"
+    },
+    {
+      "id": "africa",
+      "label": "Sub-Saharan African"
+    },
+    {
+      "id": "easteurope",
+      "label": "Eastern European"
+    }
+  ]
+}
