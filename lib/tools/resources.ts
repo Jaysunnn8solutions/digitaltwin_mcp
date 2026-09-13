@@ -18,6 +18,8 @@ export const METHOD_MARKDOWN = `# Distribution-center twin — method
 
 **Capacity.** find_capacity scales every store's candystore dollars until trucks miss the on-time or fill target and compares the most the building ships with candystore's assumed weekly capacity for the center.
 
+**Imported buildings.** import_layout (and the web page) read DXF, a WMS location CSV, ArcGIS Indoors GeoJSON, IMDF archives and IFC into a layout spec: rack runs with bays and levels, doors, walls, outline, zones. Shapes are classified by layer or category (roleMap overrides), the building is turned so racks run away from the dock wall, bay rectangles merge into runs, double-deep boxes split back to back, aisles are found from the gaps between facing runs, and personnel doors are dropped. Every simulation tool accepts the spec as layout; demand, crew and equipment still come from dc. Nothing is stored.
+
 **Mock inputs.** Buildings, catalog, suppliers, roster, labor standards and costs are placeholders. candystore's demand is its own model over real demographics; its stores and centers are fictional too.
 `;
 

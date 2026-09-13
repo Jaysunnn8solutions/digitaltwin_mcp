@@ -60,6 +60,7 @@ export async function describeTwinHandler() {
     lines.push(
       `## Tools`,
       ``,
+      `- \`import_layout\`: bring your own building (DXF, WMS location CSV, ArcGIS Indoors GeoJSON, IMDF; IFC on the local server) and pass the result as \`layout\` to any tool below.`,
       `- \`get_layout\`, \`get_workforce\`: the building and the crew.`,
       `- \`simulate_operations\`: run the floor for up to 8 weeks from any calendar week, with any scenario.`,
       `- \`what_if\`: baseline versus a scenario, same random draws.`,

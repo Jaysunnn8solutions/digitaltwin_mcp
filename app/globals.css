@@ -151,6 +151,105 @@ a {
   color: var(--accent);
 }
 
+.workbench {
+  display: grid;
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.drop {
+  display: block;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.drop.over {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.drop input {
+  display: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.row label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+button,
+select,
+input[type="number"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+input[type="number"] {
+  width: 70px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.chip {
+  border-radius: 999px;
+}
+
+.error {
+  color: #c92a2a;
+  margin-top: 12px;
+}
+
+.report {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.roles {
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 10px 0;
+  display: block;
+  overflow-x: auto;
+}
+
+.roles td {
+  border-bottom: 1px solid var(--line);
+  padding: 4px 10px 4px 0;
+}
+
 footer {
   margin-top: 36px;
   color: var(--muted);

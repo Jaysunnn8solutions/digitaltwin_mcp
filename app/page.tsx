@@ -1,10 +1,12 @@
+import Link from "next/link";
 import { loadNetwork, loadSites } from "@/lib/data/load";
-import { floorSvg } from "@/lib/render/floor";
+import { twinFloorSvg } from "@/lib/render/twin-floor";
 import { replicate } from "@/lib/twin/replicate";
 import { buildTwin } from "@/lib/twin/twin";
 
 const TOOLS: Array<[string, string]> = [
   ["describe_twin", "The network, buildings, crews and a baseline run. Call first."],
+  ["import_layout", "Read a DXF, WMS location CSV, ArcGIS Indoors GeoJSON or IMDF file into a layout every tool accepts."],
   ["simulate_operations", "Run the floor by the minute for up to eight weeks, with any scenario."],
   ["what_if", "Baseline against a scenario, with the same random draws."],
   ["stress_test", "Random breakdowns, absences, outages and supplier delays over many runs."],
@@ -43,6 +45,12 @@ export default async function Home() {
         Christmas peaks. Ask it through MCP whether a center can take an expansion, what breaks when a forklift does, or who to schedule next week.
       </p>
       <pre>claude mcp add --transport http dc-twin {ENDPOINT}</pre>
+      <p>
+        <Link href="/import">
+          <b>Run the twin in your own building →</b>
+        </Link>{" "}
+        <span className="sub">Upload a CAD drawing (DXF), a WMS location list, ArcGIS Indoors or IMDF data, or an IFC model.</span>
+      </p>
 
       <div className="grid">
         {panels.map(({ site, ctx, k, bottleneck, dc, weekly }) => (
@@ -52,7 +60,7 @@ export default async function Home() {
               {site.id} · {money(weekly)}/week of candystore demand · {ctx.workers.length} people, {site.equipment.forklifts} forklift{site.equipment.forklifts > 1 ? "s" : ""},{" "}
               {site.doors.inbound + site.doors.outbound} doors
             </div>
-            <div dangerouslySetInnerHTML={{ __html: floorSvg(ctx, { width: 520 }) }} />
+            <div dangerouslySetInnerHTML={{ __html: twinFloorSvg(ctx, 520) }} />
             <div className="tiles">
               <div className="tile">
                 <b>{(k.onTimeRate * 100).toFixed(0)}%</b>

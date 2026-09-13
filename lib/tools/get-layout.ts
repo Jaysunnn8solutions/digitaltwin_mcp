@@ -1,3 +1,4 @@
+import { layoutSpecSchema, type LayoutSpec } from "../layout/spec";
 import { GOLDEN_LEVELS } from "../twin/layout";
 import { replenishmentsPerWeek, slotCostFt } from "../twin/slotting";
 import { buildTwin, dcSchema } from "../twin/twin";
@@ -11,6 +12,7 @@ export const getLayoutConfig = {
   inputSchema: z
     .object({
       dc: dcSchema,
+      layout: layoutSpecSchema.optional(),
       slotting: z.enum(["current", "optimized"]).default("current"),
       top: z.number().int().min(5).max(50).default(15).describe("How many of the fastest SKUs to list."),
     })
@@ -18,9 +20,9 @@ export const getLayoutConfig = {
   annotations: readOnly,
 };
 
-export async function getLayoutHandler(args: { dc: string; slotting: "current" | "optimized"; top: number }) {
+export async function getLayoutHandler(args: { dc: string; layout?: LayoutSpec; slotting: "current" | "optimized"; top: number }) {
   return guarded(async () => {
-    const ctx = await buildTwin(args.dc, 36, { slotting: args.slotting });
+    const ctx = await buildTwin(args.dc, 36, { slotting: args.slotting, layout: args.layout });
     const { site, layout, slotting, faces, frequencies: freq, std, slotEval } = ctx;
     const withDemand = freq.filter((f) => f.linesPerWeek > 0);
     const dead = freq.length - withDemand.length;
@@ -38,9 +40,9 @@ export async function getLayoutHandler(args: { dc: string; slotting: "current" |
       [
         `# ${ctx.network.dcs.find((d) => d.id === site.id)?.name} (${site.id}) — ${args.slotting} slotting`,
         ``,
-        `**Building** ${site.building.widthFt}×${site.building.depthFt} ft. Doors: ${layout.doors.map((d) => d.id).join(", ")}. Equipment: ${site.equipment.forklifts} forklift(s), ${site.equipment.palletJacks} pallet jacks.`,
-        `**Pick zone** ${site.pick.aisles} aisles × ${site.pick.baysPerSide} bays a side × ${site.pick.levels} levels × ${site.pick.slotsPerBay} slot(s) = ${layout.pick.length} faces for ${freq.length} SKUs (${pct(freq.length / layout.pick.length)} occupied); aisle length ${layout.pickAisleLength} ft; depot in the front cross aisle.`,
-        `**Reserve** ${site.reserve.aisles} aisles × ${site.reserve.baysPerSide} bays × ${site.reserve.levels} levels = ${layout.reserve.length} pallet positions.`,
+        `**Building** ${Math.round(site.building.widthFt)}×${Math.round(site.building.depthFt)} ft${args.layout ? ` (imported from ${args.layout.source.format.toUpperCase()}${args.layout.source.file ? ` ${args.layout.source.file}` : ""})` : ""}. Doors: ${layout.doors.map((d) => d.id).join(", ")}. Equipment: ${site.equipment.forklifts} forklift(s), ${site.equipment.palletJacks} pallet jacks.`,
+        `**Pick zone** ${layout.pickAisles.length} aisles, ${new Set(layout.pick.map((l) => l.level)).size} levels: ${layout.pick.length} faces for ${freq.length} SKUs (${pct(freq.length / layout.pick.length)} occupied); ${Math.round(layout.pickAisleLength)} ft between the front and back cross aisles; depot in the front cross aisle.`,
+        `**Reserve** ${layout.reserveAisles.length} aisles: ${layout.reserve.length} pallet positions.`,
         ``,
         `**Velocity:** the fastest 20% of SKUs take ${pct(topShare)} of pick lines. ${dead} SKU(s) sell nothing through this center and still hold a face.`,
         `**Picking:** ${pct(goldenLines / Math.max(1, totalLines))} of lines come from golden levels 2–3; ${fmt1(slotEval.feetPerLine)} ft walked per line; ${fmt1(slotEval.linesPerHour)} lines per picker-hour at standard; ${fmtInt(slotEval.pickMinutesPerWeek / 60)} picker-hours in an ordinary week.`,

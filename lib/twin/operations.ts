@@ -456,7 +456,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
       process: "replenish",
       ready: now,
       priority: hot ? PRIORITY.hotReplen : PRIORITY.replen,
-      std: std.replenHandling + (2 * rackToRack(from, to)) / std.forkliftFtPerMin + 2 * from.level * std.liftMinPerLevel,
+      std: std.replenHandling + (2 * rackToRack(layout, from, to)) / std.forkliftFtPerMin + 2 * from.level * std.liftMinPerLevel,
       forklift: true,
       onDone: () => {
         replenPending.delete(sku);
@@ -641,13 +641,13 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     inboundPalletsTotal += pallets.length;
     palletsInFlight += pallets.length;
     const importer = book.suppliers.get(po.supplier)?.kind === "importer";
-    const doorX = layout.doors.filter((x) => x.kind === "inbound").map((x) => x.x);
+    const inDoors = layout.doors.filter((x) => x.kind === "inbound");
     waitingTrucks.push({
       arrivedAt,
       start: () => {
         doorWaits.push(now - arrivedAt);
         let left = pallets.length;
-        const x = doorX[busy.inDoor % Math.max(1, doorX.length)] ?? 0;
+        const door = inDoors[busy.inDoor % Math.max(1, inDoors.length)] ?? { x: 0, y: 0 };
         pallets.forEach((p, i) => {
           pushJob({
             process: "unload",
@@ -673,7 +673,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
                   // dropped SKU by SKU: travel to the farthest location, a
                   // handling stop and a lift at each.
                   const locs = p.items.map((it) => reserveLoc(it.sku));
-                  const far = Math.max(...locs.map((l) => dockToRack(x, l)));
+                  const far = Math.max(...locs.map((l) => dockToRack(door, l)));
                   const lifts = locs.reduce((a, l) => a + 2 * l.level * std.liftMinPerLevel, 0);
                   pushJob({
                     process: "putaway",

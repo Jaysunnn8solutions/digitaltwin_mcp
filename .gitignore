@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# copied from node_modules/web-ifc before dev and build
+/public/web-ifc.wasm
+
 # floor plans written by the local render_floor tool
 dc-floor-*.html
 

@@ -16,7 +16,7 @@
  * empty.
  */
 
-import { dockToRack, type Layout } from "./layout";
+import { dockToRack, type Layout, type Location } from "./layout";
 import { expectedDelivery, lineProbability, storesDepartingOn, weekdayOf, type DemandModel } from "./demand";
 import { seasonFactor, calendarWeekOfDay } from "./season";
 import { shiftPaidHours, hhmm, WEEKDAYS } from "./standards";
@@ -56,25 +56,37 @@ export interface WorkloadContext {
   startWeek: number;
 }
 
+function centroid(locs: Location[]): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  for (const l of locs) {
+    x += l.x;
+    y += l.y;
+  }
+  return { x: x / Math.max(1, locs.length), y: y / Math.max(1, locs.length) };
+}
+
 function avgPutawayMinutes(ctx: WorkloadContext): number {
   const inDoors = ctx.layout.doors.filter((d) => d.kind === "inbound");
-  const doorX = inDoors.reduce((a, d) => a + d.x, 0) / Math.max(1, inDoors.length);
+  const door = centroid(inDoors.map((d) => ({ x: d.x, y: d.y }) as Location));
   const locs = ctx.layout.reserve;
   let feet = 0;
   let lift = 0;
   for (const l of locs) {
-    feet += dockToRack(doorX, l);
+    feet += dockToRack(door, l);
     lift += l.level;
   }
   return ctx.std.putawayHandling + (2 * feet) / locs.length / ctx.std.forkliftFtPerMin + (2 * lift * ctx.std.liftMinPerLevel) / locs.length;
 }
 
 export function avgReplenMinutes(ctx: WorkloadContext): number {
-  // Reserve to the pick zone and back: roughly the distance between zone centres plus aisle depth.
-  const r = ctx.site.reserve;
-  const p = ctx.site.pick;
-  const feet = Math.abs(p.originX - r.originX) + (r.baysPerSide * r.bayWidthFt) / 2 + (p.baysPerSide * p.bayWidthFt) / 2;
-  return ctx.std.replenHandling + (2 * feet) / ctx.std.forkliftFtPerMin + ((r.levels + 1) / 2) * 2 * ctx.std.liftMinPerLevel;
+  // Reserve to the pick zone and back through the front cross aisle, between zone centroids.
+  const r = centroid(ctx.layout.reserve);
+  const p = centroid(ctx.layout.pick);
+  const front = ctx.layout.pickFrontY;
+  const feet = Math.abs(p.x - r.x) + Math.abs(r.y - front) + Math.abs(p.y - front);
+  const avgLevel = ctx.layout.reserve.reduce((a, l) => a + l.level, 0) / Math.max(1, ctx.layout.reserve.length);
+  return ctx.std.replenHandling + (2 * feet) / ctx.std.forkliftFtPerMin + avgLevel * 2 * ctx.std.liftMinPerLevel;
 }
 
 /** Expected standard minutes by shift and skill on horizon day `day`. */

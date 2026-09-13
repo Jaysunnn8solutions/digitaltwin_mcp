@@ -11,7 +11,9 @@ import { findSite, loadCatalog, loadNetwork, loadRoster, UnknownIdError } from "
 import { fetchNetwork } from "./candystore";
 import { buildDemandModel, type DemandModel } from "./demand";
 import { DEFAULT_POLICY, type InventoryPolicy, type SupplierDelay } from "./inventory";
-import { buildLayout, type Layout } from "./layout";
+import { formatBytes, LIMITS, LimitError } from "../layout/limits";
+import { layoutSpecSchema, type LayoutSpec } from "../layout/spec";
+import { buildLayout, siteToSpec, withDoorCounts, type Layout } from "./layout";
 import { NO_DISRUPTIONS, type Disruptions, type OperationsOptions } from "./operations";
 import { ROLE_KEYS, ROLES } from "./roles";
 import {
@@ -39,6 +41,7 @@ const daySpan = {
 };
 
 export const scenarioShape = {
+  layout: layoutSpecSchema.optional(),
   demandScale: z.number().min(0.1).max(5).optional().describe("Multiply candystore's store demand, e.g. 1.3 for 30% more."),
   demandShocks: z
     .array(z.object({ ...daySpan, factor: z.number().min(0).max(10), category: z.string().max(40).optional() }).strict())
@@ -204,6 +207,12 @@ function applyWorkers(site: Site, base: Worker[], s: TwinScenario, changes: stri
 
 function applySite(base: Site, s: TwinScenario, changes: string[]): Site {
   const site: Site = structuredClone(base);
+  if (s.layout) {
+    // An imported building brings its own size and doors; overrides apply on top.
+    site.building = { widthFt: s.layout.widthFt, depthFt: s.layout.depthFt };
+    site.doors = { inbound: s.layout.doors.filter((d) => d.kind === "inbound").length, outbound: s.layout.doors.filter((d) => d.kind === "outbound").length };
+    changes.push(`imported layout "${s.layout.name}" (${s.layout.source.format}${s.layout.source.file ? `, ${s.layout.source.file}` : ""})`);
+  }
   const set = <T extends number>(label: string, cur: T, next: T | undefined, apply: (v: T) => void) => {
     if (next === undefined || next === cur) return;
     apply(next);
@@ -252,7 +261,11 @@ export async function buildTwin(dc: string, startWeek: number, scenario: TwinSce
   if (!network.dcs.some((d) => d.id === dc)) throw new UnknownIdError(`candystore has no center "${dc}".`);
   validateCategories(network, catalog, scenario);
 
-  const layout = buildLayout(site);
+  if (scenario.layout && JSON.stringify(scenario.layout).length > LIMITS.specJson) {
+    throw new LimitError(`The layout spec is over the ${formatBytes(LIMITS.specJson)} limit. Re-import with fewer walls and zones (they are drawing-only), or split the building.`);
+  }
+  const spec = scenario.layout ? withDoorCounts(scenario.layout as LayoutSpec, site.doors.inbound, site.doors.outbound) : siteToSpec(site);
+  const layout = buildLayout(spec, site);
   const workers = applyWorkers(site, loadRoster().workers, scenario, changes);
   const std = DEFAULT_STANDARDS;
   const costs = DEFAULT_COSTS;

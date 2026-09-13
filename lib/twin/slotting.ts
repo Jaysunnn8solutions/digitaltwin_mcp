@@ -12,6 +12,7 @@
  * difference is the slotting and not a different draw of demand.
  */
 
+import { LimitError } from "../layout/limits";
 import { substream } from "../util/random";
 import { expectedDelivery, lineProbability, ordersReleasedOn, storesDepartingOn, type DemandModel, type StoreOrder } from "./demand";
 import { GOLDEN_LEVELS, depotDistance, sShapeDistance, type Layout, type Location } from "./layout";
@@ -51,7 +52,9 @@ export function slotCostFt(layout: Layout, loc: Location, std: LaborStandards): 
 
 function checkFits(layout: Layout, catalog: Catalog) {
   if (catalog.skus.length > layout.pick.length) {
-    throw new Error(`${catalog.skus.length} SKUs do not fit ${layout.pick.length} pick faces at ${layout.site.id}.`);
+    throw new LimitError(
+      `The catalog has ${catalog.skus.length} SKUs and the layout only ${layout.pick.length} pick faces. Mark more racks as pick or mixed, add levels or slots per bay, or import a larger building.`
+    );
   }
 }
 
@@ -213,8 +216,8 @@ export type FaceSizes = Map<string, number>;
 
 /** The most master cases of a SKU one pick slot holds, by cube. */
 export function slotMaxCases(layout: Layout, sku: Sku, std: LaborStandards): number {
-  const p = layout.site.pick;
-  const slotCube = (p.bayWidthFt / p.slotsPerBay) * p.rackDepthFt * std.slotHeightFt;
+  // Layout slot cubes assume a 1.5 ft level; rescale to the standards' slot height.
+  const slotCube = (layout.pickSlotCubeFt / 1.5) * std.slotHeightFt;
   return Math.max(1, Math.floor(slotCube / (sku.innersPerCase * sku.innerCubeFt)));
 }
 

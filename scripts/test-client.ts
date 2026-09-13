@@ -10,11 +10,13 @@
  * render_floor refusing to clobber a file. The live candystore call is
  * skipped with --offline.
  */
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { importLayout } from "../lib/layout/import";
+import { sampleCsv, sampleDxf, sampleIfc } from "../lib/layout/samples";
 
 const argv = process.argv.slice(2).filter((a) => a !== "--");
 const target = argv.find((a) => !a.startsWith("--")) ?? "http://localhost:3000";
@@ -23,6 +25,7 @@ const PREVIEW = 10;
 
 const OUT_DIR = path.join(os.tmpdir(), "digitaltwin-smoke");
 const FLOOR_FILE = path.join(OUT_DIR, "floor.html");
+const IFC_FILE = path.join(OUT_DIR, "sample-dc.ifc");
 
 type ToolResult = { isError?: boolean; content?: Array<{ type: string; text?: string }> };
 
@@ -65,6 +68,18 @@ async function main() {
     ["simulate_operations", { dc: "dc-east", startWeek: 36, days: 5, runs: 1, forkliftOutages: [{ count: 1, fromDay: 0, toDay: 2 }], wmsOutages: [{ day: 1, start: "07:00", hours: 3 }], workerLeave: [{ role: "Forklift operator", fromDay: 0, toDay: 4 }] }],
   ];
   if (!offline) calls.push(["what_if", { dc: "dc-east", days: 7, runs: 1, candystore: { add: [{ type: "general", lon: -84.16, lat: 33.95 }] } }]);
+
+  // Layout import: inline content on either transport, a path and IFC on stdio.
+  const csv = sampleCsv();
+  calls.push(["import_layout", { fileName: "sample-dc-locations.csv", content: csv }]);
+  calls.push(["import_layout", { fileName: "sample-dc.dxf", content: sampleDxf() }]);
+  const spec = (await importLayout({ fileName: "sample-dc.dxf", text: sampleDxf() }, {}, "inline")).spec;
+  calls.push(["simulate_operations", { dc: "dc-east", layout: spec, days: 5, runs: 1, slotting: "optimized" }]);
+  if (target === "stdio") {
+    mkdirSync(OUT_DIR, { recursive: true });
+    writeFileSync(IFC_FILE, sampleIfc());
+    calls.push(["import_layout", { path: IFC_FILE }]);
+  }
   if (target === "stdio") {
     mkdirSync(OUT_DIR, { recursive: true });
     rmSync(FLOOR_FILE, { force: true });
@@ -79,6 +94,9 @@ async function main() {
     ["simulate_operations", "days out of range", { dc: "dc-east", days: 400 }],
   ];
   if (target === "stdio") rejects.push(["render_floor", "existing file, no overwrite", { dc: "dc-east", path: FLOOR_FILE }]);
+  rejects.push(["import_layout", "DWG instead of DXF", { fileName: "plan.dwg", content: "AC1032" }]);
+  rejects.push(["import_layout", "over the inline limit", { fileName: "big.csv", content: "aisle,bay\n" + "A,1\n".repeat(70_000) }]);
+  if (target !== "stdio") rejects.push(["import_layout", "a path on the hosted server", { path: "C:/secret/plan.dxf" }]);
 
   let failures = 0;
   for (const [name, args] of calls) {

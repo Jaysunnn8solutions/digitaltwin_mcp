@@ -7,7 +7,7 @@ import { findSite, loadCatalog, loadNetwork } from "../data/load";
 import { seededRandom } from "../util/random";
 import { buildDemandModel, expectedDelivery, ordersReleasedOn, storesDepartingOn, weekdayOf } from "./demand";
 import { buildPallets } from "./inventory";
-import { buildLayout, sShapeDistance } from "./layout";
+import { buildLayout, siteToSpec, sShapeDistance } from "./layout";
 import { calendarWeekOfDay, seasonFactor } from "./season";
 import { currentSlotting, evaluateSlotting, faceSizesFor, optimizedSlotting, partialSlotting, skuFrequencies } from "./slotting";
 import { DEFAULT_STANDARDS, hhmm, shiftPaidHours } from "./standards";
@@ -34,7 +34,7 @@ describe("season", () => {
 
 describe("layout", () => {
   const site = findSite("dc-east");
-  const layout = buildLayout(site);
+  const layout = buildLayout(siteToSpec(site), site);
 
   it("builds every location and door", () => {
     const p = site.pick;
@@ -103,7 +103,7 @@ describe("slotting", () => {
   const network = loadNetwork();
   const catalog = loadCatalog();
   const site = findSite("dc-east");
-  const layout = buildLayout(site);
+  const layout = buildLayout(siteToSpec(site), site);
   const model = buildDemandModel(network, catalog, site);
   const freq = skuFrequencies(model, catalog);
   const std = DEFAULT_STANDARDS;

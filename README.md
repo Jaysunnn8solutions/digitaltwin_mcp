@@ -2,8 +2,9 @@
 
 **A digital twin of a candy distribution center.** [candystore_mcp](https://github.com/Jaysunnn8solutions/candystore_mcp) decides what its stores sell and which of its two distribution centers supplies them; this project runs those two buildings minute by minute. Supplier trucks, unloading, receiving, putaway, pick-face replenishment, store-order picking, packing, loading, and the people, forklifts and doors doing it, through the Halloween and Christmas peaks. An [MCP](https://modelcontextprotocol.io) server over a discrete-event simulation, with a small web page.
 
-**Remote MCP endpoint:** `https://<your-vercel-domain>/mcp`
-**Local MCP server:** `npm run mcp:stdio` (adds `render_floor`, which writes the floor plan to an HTML file)
+**Live site:** `https://digitaltwin-mcp.vercel.app` · **Import your building:** `https://digitaltwin-mcp.vercel.app/import`
+**Remote MCP endpoint:** `https://digitaltwin-mcp.vercel.app/mcp`
+**Local MCP server:** `npm run mcp:stdio` (adds `render_floor`, which writes the floor plan to an HTML file, and imports files by path, IFC included)
 
 This is the fourth project in a portfolio sequence: [census-mcp](https://github.com/Jaysunnn8solutions/census-mcp) (a stateless tool server), [atl-mcp](https://github.com/Jaysunnn8solutions/atl-mcp) (a spatial engine with scenarios), [candystore_mcp](https://github.com/Jaysunnn8solutions/candystore_mcp) (a market model with a supply chain), and this one, which takes candystore's supply chain down to the floor.
 
@@ -33,6 +34,44 @@ candystore says Norcross can ship $383k a week and Fulton Industrial $350k. Can 
 
 ---
 
+## Your own building
+
+The twin runs in any building you bring. Upload a floor plan on the web page, or import it through MCP, and every simulation tool takes the result as `layout`: the building comes from your file, while demand, crew and equipment still come from a center (`dc`).
+
+| Format | What it reads | How it's read |
+|---|---|---|
+| **DXF** (CAD) | Rack blocks or outlines, shelving, dock-door blocks, walls, outline, rooms | Layer and block names matched to roles (pick, reserve, mixed, rack, door, receiving/shipping door, wall, outline, staging, office, ignore), with NCS names such as A-WALL, A-EQPM and A-FLOR-OTLN recognised. Units come from `$INSUNITS`, or are guessed when the file is unitless. **DWG:** export to DXF first (Autodesk DWG TrueView or the ODA File Converter, both free); DWG libraries are paid or GPL. |
+| **WMS location CSV** | Every location's zone, aisle, side, bay, level, optional x/y, door rows | Column names matched loosely; aisle-side groups become rack runs. Without coordinates, aisles are laid out at standard pitches. |
+| **ArcGIS Indoors** GeoJSON | Units (USE_TYPE, NAME), Details (walls, doors, openings), Levels | Features To JSON exports, several files at once; Web Mercator or WGS84 |
+| **IMDF** archive | fixture (racks as equipment or furniture), opening (service or automobile doors), unit, detail, footprint, level | OGC CS 20-094 zip in WGS84; the level with the most racks, or `level` |
+| **IFC** (BIM) | Walls, doors, slabs, spaces, and furnishing or proxy elements named as racks | web-ifc (MPL-2.0), ground floor only. Web page and local server only. |
+
+Every import goes through the same pipeline:
+
+1. **Classify** each shape by its layer or category.
+2. **Orient** the building so rack runs point away from the dock wall, which becomes the front.
+3. **Build rack runs.** Bay-sized rectangles merge into runs, and double-deep boxes split into back-to-back rows.
+4. **Find aisles** from the gaps between facing rack runs.
+5. **Pick dock doors.** Personnel doors, and doors away from the dock wall, are dropped.
+6. **Report** how every layer was read, what was assumed, and the pick faces and reserve positions the twin will simulate.
+
+If a layer was read wrong, override it with `roleMap` (or the role table on the page) and import again.
+
+**Nothing is stored.** The page parses the file in your browser, and only the compact layout spec (a few KB) goes to the server when you run the twin. The MCP tools return the spec to the caller.
+
+**Size limits**, set by where the file is parsed:
+
+| Where | Limit | Why |
+|---|---|---|
+| Web page, parsed in the browser | DXF, IFC, GeoJSON 50 MB; IMDF zip 25 MB (100 MB unzipped, 200 files); CSV 10 MB | A few seconds in a Web Worker on a laptop |
+| Local MCP server, reading a path | DXF and IFC 200 MB; CSV, GeoJSON and IMDF 50 MB | Your machine, no network |
+| Hosted MCP, content inline in a tool call | 256 KB; no IFC | Content travels through the model at about 300 tokens per KB, and Vercel caps requests at 4.5 MB |
+| Any layout spec | 1 MB; ≤25,000 pick faces, ≤50,000 reserve positions, ≤100 doors, ≤2,000 ft a side, one floor | Keeps a simulation under ~10 s on Vercel |
+
+All of them live in `lib/layout/limits.ts`. `public/samples/` has the same sample warehouse in every format (`npm run samples` rebuilds them).
+
+---
+
 ## Model
 
 **Network.** candystore's market model sets each store's annual retail dollars by category (traditional, plus specialty candy for heritage segments) and its supplying center. `data/network.json` is a snapshot of candystore's live API; tools that take a `candystore` scenario (stores added or closed) call the API for that scenario instead.
@@ -57,11 +96,12 @@ Everything is implemented from these rules in `lib/twin/` with tests.
 
 ## Tools
 
-Eleven tools on both transports; `render_floor` is a twelfth that exists only on the local stdio server.
+Twelve tools on both transports; `render_floor` is a thirteenth that exists only on the local stdio server.
 
 | Tool | Purpose |
 |---|---|
 | `describe_twin` | Network, buildings, crews, and a baseline run of each center. Call first. |
+| `import_layout` | DXF, WMS CSV, ArcGIS Indoors, IMDF (and IFC locally) → a layout spec every tool accepts, with a report of how it was read. |
 | `get_layout` | Zones, faces, doors, equipment, fastest SKUs and where they sit, face sizes. |
 | `get_workforce` | Roster, skills, single points of failure, labor standards, cost rates. |
 | `simulate_operations` | Run the floor for up to 8 weeks: service, labor, flow, queues, crew, days, bottleneck. |
@@ -76,6 +116,7 @@ Eleven tools on both transports; `render_floor` is a twelfth that exists only on
 
 Every simulation tool takes the same scenario fields, so a conversation can chain "plan labor, test the fix, stress-test it" with one set of assumptions:
 
+- **Building:** `layout` (from `import_layout` or the web page).
 - **Demand:** `demandScale`, `demandShocks`, `candystore` (live store scenario).
 - **Policy:** `slotting`, `forecast`, `serviceLevel`, `flex`, `overtimeMaxHours`, `targetUtilization`.
 - **People:** `addWorkers`, `removeWorkers`, `crossTrain`, `workerLeave`, `absenteeism`.
@@ -87,7 +128,7 @@ Days count from 0, the Monday of `startWeek`. Three prompts package common chain
 ### Remote
 
 ```bash
-claude mcp add --transport http dc-twin https://<your-vercel-domain>/mcp
+claude mcp add --transport http dc-twin https://digitaltwin-mcp.vercel.app/mcp
 ```
 
 ### Local, with the floor-plan renderer
@@ -120,11 +161,14 @@ Then ask: *"Is Norcross ready for Halloween? If not, what's the cheapest fix?"*
 pipeline/         candystore snapshot, catalog and roster generators
 data/             committed network, catalog, roster, sites, manifest
 lib/util/         seeded random streams, event heap
-lib/twin/         season, layout, demand, slotting, inventory, workforce, operations (DES), replicate, twin (scenario → context)
+lib/layout/       layout spec and limits; DXF, CSV, GeoJSON (IMDF, Indoors) and IFC importers; the shared assembler; samples
+lib/twin/         season, layout (aisles and locations from a spec), demand, slotting, inventory, workforce, operations (DES), replicate, twin (scenario → context)
 lib/tools/        MCP tools, prompts, resources, one registration for both transports
-lib/render/       the floor-plan SVG
+lib/render/       the floor-plan SVG, shared by page, browser preview and render_floor
+components/       the import workbench and its Web Worker
 app/mcp/          remote MCP endpoint (mcp-handler)
-app/page.tsx      the web page
+app/api/twin/     stateless simulation of an imported layout
+app/page.tsx      the web page; app/import/ the upload page
 mcp/stdio.ts      local MCP server (StdioServerTransport) + render_floor
 ```
 
@@ -151,4 +195,5 @@ npm run test:client -- stdio                   # every tool over stdio, plus ren
 - One shift, Monday to Friday. A second shift can be approximated with a `shifts` edit in `data/sites.json`; the planner and the simulation both read it, but the default calendar was only tuned for one.
 - Reserve locations are fixed per SKU and capacity is checked, not enforced: overflow is reported, not simulated as floor stacking.
 - The labor plan works in weekly hours and the floor in cutoffs, so a plan that balances can still ship late. `plan_labor` checks its peak week on the floor for that reason.
+- Imports read plan geometry, not engineering detail: DXF arc bulges become straight segments and HATCH fills are skipped; rack levels come from the `levels` option unless a CSV or IFC says otherwise; one floor is modelled; and aisles are assumed to run front to back from a cross aisle on the dock side. Always read the import report before trusting a result.
 - Replications are few by default for speed. Raise `runs` when a decision rests on a small difference.

@@ -1,5 +1,7 @@
 import { z, ZodError } from "zod";
 import { UnknownIdError } from "../data/load";
+import { ImportError } from "../layout/assemble";
+import { LimitError } from "../layout/limits";
 import type { Kpis } from "../twin/replicate";
 import { describeDisruptions, type TwinContext, type TwinScenario } from "../twin/twin";
 import { WEEKDAYS } from "../twin/standards";
@@ -31,7 +33,7 @@ export async function guarded(fn: () => Promise<ReturnType<typeof text>> | Retur
   try {
     return await fn();
   } catch (err) {
-    if (err instanceof UnknownIdError) return error(err.message);
+    if (err instanceof UnknownIdError || err instanceof LimitError || err instanceof ImportError) return error(err.message);
     if (err instanceof ZodError) return error(`Invalid arguments: ${err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
     if (err instanceof Error && /candystore|fetch|abort|timeout/i.test(`${err.name} ${err.message}`)) return error(`Could not get the candystore scenario: ${err.message}`);
     throw err;

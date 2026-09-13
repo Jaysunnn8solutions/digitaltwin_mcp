@@ -10,6 +10,7 @@ import { describeTwinConfig, describeTwinHandler } from "./describe-twin";
 import { findCapacityConfig, findCapacityHandler } from "./find-capacity";
 import { getLayoutConfig, getLayoutHandler } from "./get-layout";
 import { getWorkforceConfig, getWorkforceHandler } from "./get-workforce";
+import { importLayoutTool } from "./import-layout";
 import { inventoryStatusConfig, inventoryStatusHandler } from "./inventory-status";
 import { optimizeSlottingConfig, optimizeSlottingHandler } from "./optimize-slotting";
 import { planLaborConfig, planLaborHandler } from "./plan-labor";
@@ -19,8 +20,10 @@ import { simulateOperationsConfig, simulateOperationsHandler } from "./simulate-
 import { stressTestConfig, stressTestHandler } from "./stress-test";
 import { whatIfConfig, whatIfHandler } from "./what-if";
 
-export function registerTools(server: McpServer): void {
+export function registerTools(server: McpServer, opts: { local?: boolean } = {}): void {
+  const importTool = importLayoutTool(opts.local ?? false);
   server.registerTool("describe_twin", describeTwinConfig, describeTwinHandler);
+  server.registerTool("import_layout", importTool.config, importTool.handler);
   server.registerTool("get_layout", getLayoutConfig, getLayoutHandler);
   server.registerTool("get_workforce", getWorkforceConfig, getWorkforceHandler);
   server.registerTool("simulate_operations", simulateOperationsConfig, simulateOperationsHandler);

@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/": ["./data/*.json"],
     "/mcp": ["./data/*.json"],
+    "/api/**": ["./data/*.json"],
   },
 };
 
