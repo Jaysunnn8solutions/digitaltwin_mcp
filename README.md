@@ -82,6 +82,7 @@ All of them live in `lib/layout/limits.ts`. `public/samples/` has the same sampl
 - **Scenarios.** Every scenario field, in tabs: labor (shifts, operating days, roster, cross-training, per-worker productivity, standards), supply (forecast, service level, supplier lead times and delays, inbound window and lateness), deliveries (demand, shocks, delivery days, release and departure times), space (slotting, face sizes, doors, forklifts, rack zones; an imported building comes from the `/import` page's "Open in 3D") and disruptions (door, forklift and WMS outages). Compare a run against the previous one on the timeline.
 - **Playback.** Scrub, 1× to 1800×, skip the hours when nobody is on the floor, follow a worker or a truck, walk the floor in first person, presets for the dock, the pick module, the reserve and the yard. Lighting follows the simulated clock.
 - **Report.** The Report tab writes up the run on screen: the headline KPIs, the bottleneck, ranked recommendations that name the scenario field and tab to change (an order selector on the late days, a forklift, more face cases, a higher service level, a later departure), and a day-by-day table of fill rate, trucks and lateness, labor cost, overtime, utilization and the process that queued most that day, with the processes, the crew and the late trucks behind it. Download it as Markdown, the day table as CSV, or everything as JSON; with a previous run on the Compare tab the Markdown adds every KPI's delta. The numbers are the engine's; the recommendations are rules over them (`lib/twin-ui/report.ts`), not an optimizer.
+- **Optimize.** The Optimize tab runs the `optimize_operations` search in the browser's Web Worker, on the same engine: pick an objective preset (service first, balanced, cost first; they differ only in how dearly a late truck is priced) and the levers the search may move (crew added by role, cross-training, flexing and the overtime cap, slotting and face cases, forklifts, pallet jacks and doors, service level, forecast, truck departure), set the population, generations and engine seeds, and watch the best weekly cost fall generation by generation. What the Scenario tab already holds (demand, outages, an imported building) is the base every candidate is built on. The result lists the plan's changes, its KPIs and cost breakdown against the operation as it is, and the runners-up; apply the plan to the Scenario tab and run it to watch it in 3D, since the winner was scored on the seeds the page plays. Nothing leaves the browser, and there is no time cap, unlike the hosted tool's 60 s.
 
 Nothing is stored. The run lives in the browser tab, and an imported drawing stays there too.
 
@@ -105,13 +106,15 @@ Nothing is stored. The run lives in the browser tab, and an imported drawing sta
 
 **Capacity.** Scale every store's demand until on-time or fill misses the target, and compare the most the building ships with candystore's assumption.
 
+**Optimizer.** A genetic algorithm over the operation's levers (`lib/twin/optimize.ts`): people added by role, cross-training, flexing, the overtime cap, slotting and face cases, forklifts, pallet jacks, doors, service level, forecast and truck departure. Each candidate is a scenario the twin accepts, run on the floor and scored as one weekly cost: labor, amortized hires and training, equipment and doors beyond the building's, the carrying cost of the stock held, and priced penalties for late trucks, trucks never loaded and orders cut. The three presets (service first, balanced, cost first) differ only in the price of a late truck; every price is an input and comes back with the plan. Generation 0 holds the operation as it is and every one-lever step from it, so an obvious single fix is found at once; then elites, tournament selection, crossover, mutation and an immigrant per generation, with early stopping and memoized candidates. Deterministic for a spec and seed, and every candidate is scored on engine seeds 1..n, so the winner replays exactly on the 3D page. The result is the best plan found, not a proof of optimality.
+
 Everything is implemented from these rules in `lib/twin/` with tests.
 
 ---
 
 ## Tools
 
-Twelve tools on both transports; `render_floor` is a thirteenth that exists only on the local stdio server.
+Thirteen tools on both transports; `render_floor` is a fourteenth that exists only on the local stdio server.
 
 | Tool | Purpose |
 |---|---|
@@ -123,11 +126,14 @@ Twelve tools on both transports; `render_floor` is a thirteenth that exists only
 | `what_if` | Baseline against a scenario with the same random draws. |
 | `stress_test` | Random breakdowns, outages, sick leave, supplier delays and surges over many runs. |
 | `find_capacity` | The most candystore demand the building ships on time, and what breaks first. |
+| `optimize_operations` | A genetic search over crew, training, overtime, slotting, equipment, doors, supply policy and truck departure for the cheapest plan by stated prices; service, balanced or cost first; the plan as a scenario. |
 | `optimize_slotting` | Current, partial and full re-slot: labor saved, moves, payback, floor check. |
 | `inventory_status` | Stock by category, open POs, weekly projection, stockouts, both forecast methods. |
 | `plan_labor` | Week-by-week requirement, gaps, overtime, temps, cost, and a floor check of the peak. |
 | `build_schedule` | Who works which day on what; hours needed and covered; one-absence risks. |
 | `render_floor` | **Local only.** Self-contained HTML floor plan shaded by pick frequency. |
+
+`optimize_operations` takes the same scenario fields as the base operation the levers do not touch, plus `objective`, `levers`, `population`, `generations`, `seeds`, `seed` and `assumptions` (the prices behind the score). The hosted call is capped at 600 evaluation-weeks (population × generations+1 × seeds × days/7) to finish inside Vercel's 60 s; the 3D page's Optimize tab runs the same search in the browser without a cap.
 
 Every simulation tool takes the same scenario fields, so a conversation can chain "plan labor, test the fix, stress-test it" with one set of assumptions:
 

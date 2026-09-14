@@ -12,6 +12,7 @@ import { getLayoutConfig, getLayoutHandler } from "./get-layout";
 import { getWorkforceConfig, getWorkforceHandler } from "./get-workforce";
 import { importLayoutTool } from "./import-layout";
 import { inventoryStatusConfig, inventoryStatusHandler } from "./inventory-status";
+import { optimizeOperationsConfig, optimizeOperationsHandler } from "./optimize-operations";
 import { optimizeSlottingConfig, optimizeSlottingHandler } from "./optimize-slotting";
 import { planLaborConfig, planLaborHandler } from "./plan-labor";
 import { disruptionPrompt, expansionPrompt, peakPrompt } from "./prompts";
@@ -30,6 +31,7 @@ export function registerTools(server: McpServer, opts: { local?: boolean } = {})
   server.registerTool("what_if", whatIfConfig, whatIfHandler);
   server.registerTool("stress_test", stressTestConfig, stressTestHandler);
   server.registerTool("find_capacity", findCapacityConfig, findCapacityHandler);
+  server.registerTool("optimize_operations", optimizeOperationsConfig, optimizeOperationsHandler);
   server.registerTool("optimize_slotting", optimizeSlottingConfig, optimizeSlottingHandler);
   server.registerTool("inventory_status", inventoryStatusConfig, inventoryStatusHandler);
   server.registerTool("plan_labor", planLaborConfig, planLaborHandler);

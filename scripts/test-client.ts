@@ -61,6 +61,7 @@ async function main() {
     ["what_if", { dc: "dc-west", startWeek: 36, days: 7, runs: 2, forklifts: 2, crossTrain: [{ role: "Order selector", skill: "forklift" }] }],
     ["stress_test", { dc: "dc-west", days: 10, runs: 10 }],
     ["find_capacity", { dc: "dc-east", days: 7, runs: 1 }],
+    ["optimize_operations", { dc: "dc-east", startWeek: 44, days: 3, population: 6, generations: 1, levers: ["slotting", "selectors"] }],
     ["optimize_slotting", { dc: "dc-east", maxMoves: 20, listMoves: 5 }],
     ["inventory_status", { dc: "dc-east", startWeek: 38, weeks: 8, forecast: "trailing", supplierDelays: [{ category: "specialty:latam", extraDays: 14, fromDay: 0, toDay: 20 }] }],
     ["plan_labor", { dc: "dc-east", startWeek: 38, weeks: 10 }],
@@ -112,6 +113,12 @@ async function main() {
       const ok = body.includes(want);
       if (!ok) failures++;
       console.log(`3D link (${want}): ${ok ? "present" : "MISSING"}`);
+    }
+    // The optimizer names its plan and either links the winner in 3D or says the base wins.
+    if (!result.isError && name === "optimize_operations") {
+      const ok = body.includes("The plan") && (body.includes("/twin#") || body.includes("keep the operation"));
+      if (!ok) failures++;
+      console.log(`plan and 3D link: ${ok ? "present" : "MISSING"}`);
     }
   }
 

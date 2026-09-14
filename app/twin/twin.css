@@ -1376,6 +1376,249 @@ main.twin-main {
   color: var(--twin-bad);
 }
 
+/* The Optimize panel stays mounted behind the other tabs (its worker and result survive a tab switch); hidden is what hides it. */
+.twin-tabbody[hidden] {
+  display: none;
+}
+
+/* optimize: the report's look (tiles, table, badges) over the scenario form's fields */
+
+.twin-opt .head {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.twin-opt .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 4px;
+}
+
+.twin-opt h3 .chips {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.twin-opt h3 .chip,
+.twin-opt h3 .twin-chip {
+  font-size: 11px;
+  padding: 1px 8px;
+  margin-left: 4px;
+  vertical-align: middle;
+  font-weight: 400;
+}
+
+.twin-opt .levers {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.twin-opt .levers .area {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.twin-opt .lever {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.twin-opt .lever input {
+  margin: 0;
+  flex: 0 0 auto;
+  position: relative;
+  top: 1px;
+}
+
+.twin-opt .lever span {
+  min-width: 0;
+}
+
+.twin-opt .lever small {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.twin-opt .budgets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.twin-opt .budgets button {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+.twin-opt .budgets button small {
+  font-size: 10px;
+  opacity: 0.75;
+  margin-left: 5px;
+}
+
+.twin-opt .budgets button.on {
+  background: var(--text);
+  color: var(--panel);
+  border-color: var(--text);
+}
+
+.twin-opt .note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0 0 8px;
+}
+
+.twin-opt .status {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.twin-opt .status .twin-chip {
+  justify-self: start;
+  white-space: normal;
+}
+
+.twin-opt .status .twin-progress {
+  width: 100%;
+}
+
+.twin-opt .status .sub {
+  margin: 0;
+  font-size: 12px;
+}
+
+.twin-opt .tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.twin-opt .tiles div {
+  display: grid;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.twin-opt .tiles b {
+  font-size: 16px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.twin-opt .tiles b.bad {
+  color: var(--twin-bad);
+}
+
+.twin-opt .tiles b.good {
+  color: var(--twin-good);
+}
+
+.twin-opt .scroll {
+  overflow-x: auto;
+}
+
+.twin-opt table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.twin-opt th,
+.twin-opt td {
+  padding: 3px 6px 3px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.twin-opt th:first-child,
+.twin-opt td:first-child {
+  text-align: left;
+}
+
+.twin-opt td.good {
+  color: var(--twin-good);
+}
+
+.twin-opt td.bad {
+  color: var(--twin-bad);
+}
+
+.twin-opt tr.total td {
+  font-weight: 600;
+}
+
+.twin-opt tr.sep td {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding-top: 8px;
+  white-space: normal;
+}
+
+.twin-opt .changes {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.twin-opt .alts {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.twin-opt .alts li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.twin-opt .alts li .row {
+  margin: 0;
+  justify-content: space-between;
+}
+
+.twin-opt .alts li .sub {
+  margin: 0;
+  font-size: 12px;
+}
+
 /* network inset */
 
 .twin-network svg {

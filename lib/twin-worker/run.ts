@@ -25,6 +25,7 @@ import { collectBuffers, compilePlayback } from "../trace/compile";
 import { RecordingTracer, type RunSpec, type TraceEvent, type TwinRequest, type TwinResponse } from "../trace/types";
 import { buildWorld } from "../trace/world";
 import { runOperations } from "../twin/operations";
+import { optimize } from "../twin/optimize";
 import { kpis } from "../twin/replicate";
 import { buildTwin, operationsOptions, scenarioSchema, type TwinScenario } from "../twin/twin";
 import { buildWorldPayload, workerInfos } from "./payload";
@@ -92,6 +93,18 @@ function errorResponse(runId: string, err: unknown): TwinResponse {
 export async function runInWorker(req: TwinRequest, post: PostMessageFn): Promise<void> {
   if (req.type === "ping") {
     post({ type: "pong" });
+    return;
+  }
+  if (req.type === "optimize") {
+    const { runId } = req;
+    try {
+      const base = scenarioSchema.parse(req.spec.base);
+      if (base.candystore) throw new UnsupportedError(CANDYSTORE_UNSUPPORTED);
+      const result = await optimize({ ...req.spec, base }, (progress) => post({ type: "optProgress", runId, progress }));
+      post({ type: "optDone", runId, result });
+    } catch (err) {
+      post(errorResponse(runId, err));
+    }
     return;
   }
   const { runId, spec, keepEvents } = req;

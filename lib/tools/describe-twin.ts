@@ -67,6 +67,7 @@ export async function describeTwinHandler() {
       `- \`what_if\`: baseline versus a scenario, same random draws.`,
       `- \`stress_test\`: random breakdowns, absences and supplier delays over many runs.`,
       `- \`find_capacity\`: how much candystore demand the building actually ships on time.`,
+      `- \`optimize_operations\`: a genetic search over hires, cross-training, overtime, slotting, face sizes, equipment, doors, service level, forecast and truck departure for the cheapest plan by stated prices (labor, hires, equipment, stock carried, late and cut penalties); three service-versus-cost presets; returns the plan as a scenario.`,
       `- \`optimize_slotting\`: velocity slotting and face sizing, with the moves and the payback.`,
       `- \`inventory_status\`: stock, order-up-to levels, projected cuts and reserve space.`,
       `- \`plan_labor\`, \`build_schedule\`: weekly staffing against the season, and who works what.`,

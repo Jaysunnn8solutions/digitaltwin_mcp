@@ -30,6 +30,7 @@
 import type { LayoutSpec } from "../layout/spec";
 import type { Layout } from "../twin/layout";
 import type { OperationsResult } from "../twin/operations";
+import type { OptimizeProgress, OptimizeResult, OptimizeSpec } from "../twin/optimize";
 import type { Kpis } from "../twin/replicate";
 import type { TwinScenario } from "../twin/twin";
 import type { LaborStandards, Process, Skill } from "../twin/types";
@@ -697,7 +698,11 @@ export interface RunSpec {
   scenario: TwinScenario;
 }
 
-export type TwinRequest = { type: "run"; runId: string; spec: RunSpec; keepEvents: boolean } | { type: "ping" };
+export type TwinRequest =
+  | { type: "run"; runId: string; spec: RunSpec; keepEvents: boolean }
+  /** The genetic optimizer (lib/twin/optimize.ts): one `optProgress` per generation, then `optDone` or `error`. */
+  | { type: "optimize"; runId: string; spec: OptimizeSpec }
+  | { type: "ping" };
 
 export type ProgressPhase = "context" | "simulate" | "compile";
 
@@ -705,6 +710,8 @@ export type TwinResponse =
   | { type: "ready"; dcs: string[] }
   | { type: "pong" }
   | { type: "progress"; runId: string; phase: ProgressPhase; day: number; days: number }
+  | { type: "optProgress"; runId: string; progress: OptimizeProgress }
+  | { type: "optDone"; runId: string; result: OptimizeResult }
   | {
       type: "done";
       runId: string;

@@ -52,7 +52,8 @@ export default function HelpOverlay({ open, onClose }: Props) {
       <p className="sub">
         Run a scenario, press Space, and watch: supplier trucks back into the inbound doors, forklifts put pallets away, pickers walk S-shaped tours through the pick module, packed pallets
         stage at the outbound doors and store trucks leave at their departure time. Click anything (a person, a truck, a rack face, a door, a queue chip) to open it in the inspector. Drag on the
-        canvas to orbit, wheel to zoom, right-drag to pan. Numbers on the HUD are the engine&apos;s own accounting; the inspector says which rows are engine facts and which the picture adds.
+        canvas to orbit, wheel to zoom, right-drag to pan. Numbers on the HUD are the engine&apos;s own accounting; the inspector says which rows are engine facts and which the picture adds. The
+        Optimize tab searches the levers for the cheapest weekly plan and loads it into the Scenario tab.
       </p>
       <table>
         <tbody>

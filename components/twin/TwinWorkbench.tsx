@@ -27,6 +27,7 @@ import Hud, { type HudSnapshot } from "./Hud";
 import Inspector from "./Inspector";
 import Minimap from "./Minimap";
 import NetworkInset from "./NetworkInset";
+import OptimizePanel from "./OptimizePanel";
 import ReportPanel from "./ReportPanel";
 import ScenarioPanel, { Datalists, type FormContext, type ScenarioTab } from "./ScenarioPanel";
 import Deliveries from "./tabs/Deliveries";
@@ -63,7 +64,7 @@ export interface RunRecord {
 
 type Status = { kind: "idle" } | { kind: "running"; phase: string; day: number; days: number } | { kind: "error"; name: string; message: string };
 
-type SideTab = "scenario" | "inspector" | "network" | "compare" | "report" | "help";
+type SideTab = "scenario" | "inspector" | "network" | "compare" | "optimize" | "report" | "help";
 
 interface ViewFlags {
   heat: boolean;
@@ -155,6 +156,22 @@ function withoutLayout(s: TwinScenario): TwinScenario {
   const { layout, ...rest } = s;
   void layout;
   return rest;
+}
+
+type Composed =
+  /** `scenario` is what the worker runs (an imported building's layout, with its Space edits, on top); `bare` is the same without the layout, what the link and the run record carry. */
+  | { scenario: TwinScenario; bare: TwinScenario; error?: undefined }
+  | { scenario?: undefined; bare?: undefined; error: { where: "form" | "building" | "space"; name: string; message: string } };
+
+/** The scenario a run or an optimizer search starts from, or the first reason it cannot start: the form's errors, a building not loaded, SKUs that do not fit the pick faces. */
+function composeScenario(form: ScenarioForm, building: BuildingChoice, overrideSpec: LayoutSpec | null | undefined, ctx: FormContext, edits: ImportRackEdits): Composed {
+  const res = formToScenario(form);
+  if (!res.scenario) return { error: { where: "form", name: "Form", message: "Fix the highlighted fields first." } };
+  const spec = overrideSpec !== undefined ? overrideSpec : building.kind === "builtin" ? null : building.spec;
+  if (building.kind !== "builtin" && !spec) return { error: { where: "building", name: "Building", message: building.error ?? "The imported building has not loaded yet." } };
+  const check = spaceCheck(form, { ...ctx, imported: spec });
+  if (check.error) return { error: { where: "space", name: "LimitError", message: check.error } };
+  return { scenario: spec ? { ...res.scenario, layout: applyImportEdits(spec, edits) } : res.scenario, bare: res.scenario };
 }
 
 /** The HUD's exact figures at t: the last checkpoint plus a replay of the events since; kpis(result) at the horizon. */
@@ -286,6 +303,12 @@ export default function TwinWorkbench() {
     return run.dc !== spec.dc || run.week !== spec.startWeek || run.days !== spec.days || run.seed !== spec.seed || sourceOf(building) !== current.src || JSON.stringify(s) !== JSON.stringify(spec.scenario);
   }, [current, parsed.scenario, run, building]);
 
+  /** What the optimizer searches from: the scenario the form and the run row describe now, the imported building included. */
+  const optBase = useMemo(() => {
+    const c = composeScenario(form, building, undefined, formCtx, importEdits);
+    return c.error ? { base: null, error: c.error.message } : { base: { dc: run.dc, startWeek: run.week, scenario: c.scenario }, error: null };
+  }, [form, building, formCtx, importEdits, run.dc, run.week]);
+
   const options: ViewerOptions = useMemo(() => ({ shadows: true, heat: view.heat, labels: view.labels, dayNight: view.dayNight, quality: view.quality, theme, debugSpeed: false }), [view.heat, view.labels, view.dayNight, view.quality, theme]);
 
   const hud = useMemo(() => (current ? snapshotAt(current, clock.t) : null), [current, clock.t]);
@@ -331,38 +354,29 @@ export default function TwinWorkbench() {
     const useForm = inputs?.form ?? form;
     const useBuilding = inputs?.building ?? building;
     setWorkerErrors({});
-    const res = formToScenario(useForm);
-    if (!res.scenario) {
-      setTab("scenario");
-      setSheetOpen(true);
-      setStatus({ kind: "error", name: "Form", message: "Fix the highlighted fields first." });
+    const composed = composeScenario(useForm, useBuilding, overrideSpec, formCtx, importEdits);
+    if (composed.error) {
+      const e = composed.error;
+      if (e.where !== "building") {
+        setTab("scenario");
+        setSheetOpen(true);
+      }
+      if (e.where === "space") setScenarioTab("space");
+      setStatus({ kind: "error", name: e.name, message: e.message });
       return;
     }
-    const spec = overrideSpec !== undefined ? overrideSpec : useBuilding.kind === "builtin" ? null : useBuilding.spec;
-    if (useBuilding.kind !== "builtin" && !spec) {
-      setStatus({ kind: "error", name: "Building", message: useBuilding.error ?? "The imported building has not loaded yet." });
-      return;
-    }
-    const check = spaceCheck(useForm, { ...formCtx, imported: spec });
-    if (check.error) {
-      setTab("scenario");
-      setScenarioTab("space");
-      setSheetOpen(true);
-      setStatus({ kind: "error", name: "LimitError", message: check.error });
-      return;
-    }
-    const scenario: TwinScenario = spec ? { ...res.scenario, layout: applyImportEdits(spec, importEdits) } : res.scenario;
+    const { scenario, bare } = composed;
     const runId = `run-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
     runIdRef.current = runId;
     const runSpec: RunSpec = { dc: useRun.dc, startWeek: useRun.week, days: useRun.days, seed: useRun.seed, scenario };
     const src = sourceOf(useBuilding);
     const name = useBuilding.kind === "builtin" ? (DC_NAMES[useRun.dc] ?? useRun.dc) : useBuilding.name || "imported building";
-    requests.current.set(runId, { spec: { ...runSpec, scenario: res.scenario }, src, building: name });
+    requests.current.set(runId, { spec: { ...runSpec, scenario: bare }, src, building: name });
     const req: TwinRequest = { type: "run", runId, spec: runSpec, keepEvents: true };
     setStatus({ kind: "running", phase: "context", day: 0, days: useRun.days });
     w.postMessage(req);
     try {
-      writeHash(encodeHash({ dc: useRun.dc, week: useRun.week, days: useRun.days, seed: useRun.seed, src, scenario: res.scenario }));
+      writeHash(encodeHash({ dc: useRun.dc, week: useRun.week, days: useRun.days, seed: useRun.seed, src, scenario: bare }));
       setLinkMsg(null);
     } catch (err) {
       setLinkMsg(err instanceof HashError ? err.message : String(err));
@@ -657,6 +671,14 @@ export default function TwinWorkbench() {
     setForm(fn);
     setWorkerErrors({});
   };
+  /** A plan from the Optimize tab into the form (the building stays what it is), and a run of it when asked, the way the Run button runs. */
+  const applyPlan = (scenario: TwinScenario, andRun: boolean) => {
+    const f = scenarioToForm(withoutLayout(scenario));
+    updateForm(() => f);
+    setTab("scenario");
+    if (narrow) setSheetOpen(true);
+    if (andRun) launch({ run, form: f, building });
+  };
   const setRunField = (key: keyof RunText, value: string) => setRunText((r) => ({ ...r, [key]: value }));
   /** On blur the field shows the value the run will use (clamped, or the default for a blank). */
   const commitRunField = (key: "week" | "days" | "seed") => setRunText((r) => ({ ...r, [key]: String(runFromText(r)[key]) }));
@@ -850,6 +872,7 @@ export default function TwinWorkbench() {
                 ["inspector", "Inspector"],
                 ["network", "Network"],
                 ["compare", "Compare"],
+                ["optimize", "Optimize"],
                 ["report", "Report"],
                 ["help", "Help"],
               ] as Array<[SideTab, string]>
@@ -934,6 +957,10 @@ export default function TwinWorkbench() {
               <ComparePanel a={previous ? { label: previous.label, kpis: previous.kpis, changes: previous.world.changes } : null} b={current ? { label: current.label, kpis: current.kpis, changes: current.world.changes } : null} onSwap={swapRuns} />
             </div>
           )}
+          {/* Mounted once and hidden behind the other tabs: the search worker and its result outlive a visit to the Scenario tab (Apply switches there). */}
+          <div className="twin-tabbody" role="tabpanel" id="twin-panel-optimize" aria-labelledby="twin-tab-optimize" hidden={tab !== "optimize"}>
+            <OptimizePanel base={optBase.base} baseError={optBase.error} building={buildingName} onApply={applyPlan} />
+          </div>
           {tab === "report" && (
             <div className="twin-tabbody" role="tabpanel" id="twin-panel-report" aria-labelledby="twin-tab-report">
               {/* The records themselves, not copies: their identity is stable between renders, so the report is built once per run. */}
@@ -948,6 +975,7 @@ export default function TwinWorkbench() {
                 trucks at the inbound doors, forklifts putting pallets away, pickers walking S-shaped tours through the pick module, packing, staging, store trucks leaving at their departure time.
               </p>
               <p>The numbers on the HUD are the engine&apos;s own accounting at the current minute. What the engine never decides (which door, which forklift, where a pallet sits in a lane) the playback picks deterministically and the inspector labels as shown.</p>
+              <p>The Optimize tab searches crew, training, overtime, slotting, equipment, doors, service level and departure time for the cheapest weekly plan against the scenario as it stands, in a second worker, and loads the plan into the Scenario tab.</p>
               <h3>Keys</h3>
               <button type="button" onClick={() => setView((v) => ({ ...v, help: true }))}>
                 Show the keyboard map
