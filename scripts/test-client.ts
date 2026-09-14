@@ -106,6 +106,13 @@ async function main() {
     if (result.isError) failures++;
     console.log(`\n=== ${name} (${result.isError ? "ERROR" : "ok"}, ${Date.now() - started} ms) ===`);
     console.log(body.split("\n").slice(0, PREVIEW).join("\n"));
+    // The simulation tools end with a 3D link (a built-in building) or a pointer to the import page (a layout).
+    if (!result.isError && (name === "simulate_operations" || name === "what_if") && !("candystore" in args)) {
+      const want = "layout" in args ? "/import" : "/twin#";
+      const ok = body.includes(want);
+      if (!ok) failures++;
+      console.log(`3D link (${want}): ${ok ? "present" : "MISSING"}`);
+    }
   }
 
   const promptCalls: Array<[string, Record<string, string>]> = [

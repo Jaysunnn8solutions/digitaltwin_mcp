@@ -1,7 +1,7 @@
 import { replicate } from "../twin/replicate";
 import { buildTwin } from "../twin/twin";
 import { baseShape, scenarioShape, splitScenario } from "./args";
-import { daysSchema, dcName, fmt1, guarded, kpiTable, readOnlyOpenWorld, runsSchema, scenarioLine, text, z } from "./shared";
+import { daysSchema, dcName, fmt1, guarded, kpiTable, readOnlyOpenWorld, runsSchema, scenarioLine, text, twinLink, z } from "./shared";
 
 export const whatIfConfig = {
   title: "Compare a scenario with the baseline",
@@ -54,6 +54,9 @@ export async function whatIfHandler(args: Args) {
         `**In short:** the scenario ${verdict.length ? verdict.join(", ") : "changes nothing material at this horizon"}.`,
         ``,
         `Means over runs. Demand draws, supplier arrivals and absences use the same seeds in both, so the difference is the scenario; a scenario that changes demand changes the draws it feeds.`,
+        ``,
+        // The scenario side; the page's Compare tab runs the baseline with the same seed.
+        twinLink(dc, startWeek, days, scenario),
       ].join("\n")
     );
   });

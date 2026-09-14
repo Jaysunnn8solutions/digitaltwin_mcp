@@ -1,4 +1,6 @@
 import { createMcpHandler } from "mcp-handler";
+// Explicit, so the fs data provider is registered even if no tool imports it transitively one day.
+import "@/lib/data/load";
 import { registerTools } from "@/lib/tools/register";
 
 /**

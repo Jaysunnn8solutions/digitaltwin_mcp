@@ -1,9 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ROLES, type Role } from "@/lib/layout/assemble";
 import { describeImport, type ImportOptions, type ImportResult } from "@/lib/layout/import";
 import { formatBytes, LIMITS } from "@/lib/layout/limits";
+import { compactSpec } from "@/lib/layout/spec";
 import { floorSvg } from "@/lib/render/floor";
 import { buildLayout } from "@/lib/twin/layout";
 import type { Site } from "@/lib/twin/types";
@@ -38,7 +40,11 @@ function browserLimit(name: string): number {
 
 const PREVIEW_SITE = { id: "preview" } as unknown as Site;
 
+/** Where the /twin page reads an imported building from: sessionStorage, never the URL (a spec can be up to 1 MB). */
+const TWIN_SESSION_KEY = "twin.layout.v1";
+
 export default function ImportWorkbench() {
+  const router = useRouter();
   const workerRef = useRef<Worker | null>(null);
   const [files, setFiles] = useState<Array<{ name: string; bytes: ArrayBuffer }>>([]);
   const [busy, setBusy] = useState<"" | "parsing" | "running">("");
@@ -50,6 +56,7 @@ export default function ImportWorkbench() {
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
 
   useEffect(() => {
     const w = new Worker(new URL("./import.worker.ts", import.meta.url), { type: "module" });
@@ -149,6 +156,20 @@ export default function ImportWorkbench() {
     await navigator.clipboard.writeText(JSON.stringify(result.spec));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // The 3D page runs the twin in a worker in the browser; the building goes
+  // through sessionStorage (same tab) and the run settings through the hash.
+  const openIn3d = () => {
+    if (!result) return;
+    setOpenError(null);
+    try {
+      window.sessionStorage.setItem(TWIN_SESSION_KEY, JSON.stringify(compactSpec(result.spec)));
+    } catch {
+      setOpenError("This browser would not store the layout for the 3D page (storage full or blocked). On the 3D page, choose “Drop a drawing” and drop the file again.");
+      return;
+    }
+    router.push(`/twin#dc=${encodeURIComponent(run.dc)}&week=${run.startWeek}&days=7&seed=1&src=session`);
   };
 
   const k = runResult?.kpis;
@@ -289,7 +310,11 @@ export default function ImportWorkbench() {
             <button type="button" className="primary" onClick={() => void runTwin()} disabled={busy !== ""}>
               {busy === "running" ? "Simulating…" : "Run the twin"}
             </button>
+            <button type="button" onClick={openIn3d} disabled={busy !== ""} title="Watch a week run in this building, simulated and drawn in your browser">
+              Open in 3D →
+            </button>
           </div>
+          {openError && <p className="error">{openError}</p>}
           {runResult && k && (
             <>
               <div className="tiles">

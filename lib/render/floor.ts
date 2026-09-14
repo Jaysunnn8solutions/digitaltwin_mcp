@@ -40,14 +40,35 @@ export interface FloorOptions {
   heatLabel?: string;
 }
 
-export function floorSvg(spec: LayoutSpec, opts: FloorOptions = {}): string {
+/** Feet → SVG pixels for a spec drawn `width` px wide: the transform floorSvg uses, exported so an overlay can share it. */
+export interface FloorTransform {
+  X: (x: number) => number;
+  Y: (y: number) => number;
+  /** SVG pixels → feet, the inverse of X/Y. */
+  toFeet: (px: number, py: number) => [x: number, y: number];
+  pad: number;
+  scale: number;
+  /** The viewBox size, legend line included. */
+  width: number;
+  height: number;
+}
+
+export function floorTransform(spec: LayoutSpec, width = 640): FloorTransform {
   const W = spec.widthFt;
   const D = spec.depthFt;
   const pad = Math.max(14, Math.max(W, D) * 0.03);
-  const scale = (opts.width ?? 640) / (W + 2 * pad);
+  const scale = width / (W + 2 * pad);
   const X = (x: number) => f1((x + pad) * scale);
   // Dock wall at the bottom of the drawing.
   const Y = (y: number) => f1((D - y + pad) * scale);
+  const toFeet = (px: number, py: number): [number, number] => [px / scale - pad, D - (py / scale - pad)];
+  return { X, Y, toFeet, pad, scale, width: f1((W + 2 * pad) * scale), height: f1((D + 2 * pad) * scale + 26) };
+}
+
+export function floorSvg(spec: LayoutSpec, opts: FloorOptions = {}): string {
+  const W = spec.widthFt;
+  const D = spec.depthFt;
+  const { X, Y, scale } = floorTransform(spec, opts.width ?? 640);
   const parts: string[] = [];
   const poly = (pts: Array<[number, number]>, attrs: string, close: boolean) =>
     `<${close ? "polygon" : "polyline"} points="${pts.map(([x, y]) => `${X(x)},${Y(y)}`).join(" ")}" ${attrs}/>`;
@@ -114,8 +135,7 @@ export function floorSvg(spec: LayoutSpec, opts: FloorOptions = {}): string {
   const doorLabels = spec.doors.length <= 16;
   if (doorLabels) for (const door of spec.doors) parts.push(`<text x="${X(door.x)}" y="${f1(Y(door.y) + 16)}" text-anchor="middle" class="lbl sm">${esc(door.id)}</text>`);
 
-  const width = f1((W + 2 * pad) * scale);
-  const height = f1((D + 2 * pad) * scale + 26);
+  const { width, height } = floorTransform(spec, opts.width ?? 640);
   const legend = `Green inbound doors, orange outbound · blue-grey pick racks, tan reserve, lilac mixed${opts.heat ? ` · shade = ${esc(opts.heatLabel ?? "value")}` : ""} · ${Math.round(W)}×${Math.round(D)} ft`;
   parts.push(`<text x="${X(0)}" y="${f1(height - 6)}" class="lbl sm">${legend}</text>`);
   return `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="${esc(`Floor plan of ${spec.name}`)}" xmlns="http://www.w3.org/2000/svg"><style>.lbl{font:12px system-ui,sans-serif;fill:var(--floor-text,#333)}.sm{font-size:10px}</style>${parts.join("")}</svg>`;

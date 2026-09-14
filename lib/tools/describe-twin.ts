@@ -1,9 +1,10 @@
 import { loadCatalog, loadManifest, loadNetwork, loadRoster, loadSites } from "../data/load";
 import { replicate } from "../twin/replicate";
+import { EXTENSION_KEYS } from "../twin/scenario-ext";
 import { seasonFactor } from "../twin/season";
 import { buildTwin } from "../twin/twin";
 import { SKILLS } from "../twin/types";
-import { fmt1, fmtInt, guarded, hours, money, pct, readOnly, text, z } from "./shared";
+import { fmt1, fmtInt, guarded, hours, money, pct, readOnly, SITE_URL, text, z } from "./shared";
 
 export const describeTwinConfig = {
   title: "Describe the distribution-center twin",
@@ -69,8 +70,9 @@ export async function describeTwinHandler() {
       `- \`optimize_slotting\`: velocity slotting and face sizing, with the moves and the payback.`,
       `- \`inventory_status\`: stock, order-up-to levels, projected cuts and reserve space.`,
       `- \`plan_labor\`, \`build_schedule\`: weekly staffing against the season, and who works what.`,
+      `- **3D twin** at ${SITE_URL}/twin: the same engine in a Web Worker in the browser, played back in 3D with every truck, tour, replenishment and worker at the minute the engine did it. \`simulate_operations\` and \`what_if\` end with a link that replays their first run (seed 1).`,
       ``,
-      `Every simulation tool takes the same scenario fields: demand (\`demandScale\`, \`demandShocks\`, a live \`candystore\` store scenario), policy (\`slotting\`, \`forecast\`, \`serviceLevel\`, \`flex\`, \`overtimeMaxHours\`), people (\`addWorkers\`, \`removeWorkers\`, \`crossTrain\`, \`workerLeave\`, \`absenteeism\`), facility (\`forklifts\`, \`palletJacks\`, \`inboundDoors\`, \`outboundDoors\`, \`faceCases\`) and disruptions (\`doorOutages\`, \`forkliftOutages\`, \`wmsOutages\`, \`supplierDelays\`). Days count from 0, the Monday of \`startWeek\`.`,
+      `Every simulation tool takes the same scenario fields: demand (\`demandScale\`, \`demandShocks\`, a live \`candystore\` store scenario), policy (\`slotting\`, \`forecast\`, \`serviceLevel\`, \`flex\`, \`overtimeMaxHours\`), people (\`addWorkers\`, \`removeWorkers\`, \`crossTrain\`, \`workerLeave\`, \`absenteeism\`), facility (\`forklifts\`, \`palletJacks\`, \`inboundDoors\`, \`outboundDoors\`, \`faceCases\`), disruptions (\`doorOutages\`, \`forkliftOutages\`, \`wmsOutages\`, \`supplierDelays\`) and, added with the 3D twin, ${EXTENSION_KEYS.map((k) => `\`${k}\``).join(", ")}: shift patterns, operating and delivery days, the site's clock, per-worker overrides, labor standards, supplier lead times, inbound lateness and the built-in buildings' rack zones. Days count from 0, the Monday of \`startWeek\`.`,
       ``,
       `Data built ${manifest.generatedAt.slice(0, 10)}. Standards, costs, buildings and the roster are placeholders to be edited.`
     );

@@ -5,6 +5,48 @@ import { LimitError } from "../layout/limits";
 import type { Kpis } from "../twin/replicate";
 import { describeDisruptions, type TwinContext, type TwinScenario } from "../twin/twin";
 import { WEEKDAYS } from "../twin/standards";
+import { encodeHash, HASH_MAX_DAYS, HashError } from "../twin-ui/hash";
+
+/**
+ * The site's own origin, for links in tool output. Handlers never see the
+ * request URL (mcp-handler hides it, and stdio has none), so it comes from
+ * the env: Vercel sets the production domain at build time; locally the dev
+ * server. Server-only: this module is never in a browser bundle.
+ */
+export const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000";
+
+/**
+ * The /twin page URL that replays a tool's first replication: replicate()
+ * runs seeds 1..runs, so seed 1 on the page is rep.runs[0]. Days are capped
+ * at the page's horizon; draws happen in event order, so the first 28 days of
+ * a longer run are the same. Null when the scenario carries a layout (an
+ * imported building is up to 1 MB and is handed to the page in-browser, never
+ * in a URL) or is too large for a shareable link.
+ */
+export function twinUrl(dc: string, startWeek: number, days: number, scenario: TwinScenario): string | null {
+  if (scenario.layout) return null;
+  try {
+    return `${SITE_URL}/twin${encodeHash({ dc, week: startWeek, days: Math.min(days, HASH_MAX_DAYS), seed: 1, scenario })}`;
+  } catch (err) {
+    if (err instanceof HashError) return null;
+    throw err;
+  }
+}
+
+/**
+ * The closing line of simulate_operations and what_if: how to watch the run
+ * in 3D. A candystore store scenario is fetched live on the server and the
+ * browser cannot (no CORS on candystore-mcp), so that case says so instead of
+ * linking to a page that would refuse it.
+ */
+export function twinLink(dc: string, startWeek: number, days: number, scenario: TwinScenario): string {
+  if (scenario.layout) return `For an imported building, open ${SITE_URL}/import, import the drawing and use Open in 3D.`;
+  if (scenario.candystore) return `The 3D page (${SITE_URL}/twin) plays the committed store network only; a candystore store scenario is not replayed there.`;
+  const url = twinUrl(dc, startWeek, days, scenario);
+  if (!url) return `This scenario is too large for a link; enter it on ${SITE_URL}/twin to watch it in 3D.`;
+  if (days > HASH_MAX_DAYS) return `Watch the first ${HASH_MAX_DAYS} days of this run in 3D (seed 1, same draws): ${url}`;
+  return `Watch this run in 3D (seed 1 replays exactly): ${url}`;
+}
 
 export const readOnly = {
   readOnlyHint: true,

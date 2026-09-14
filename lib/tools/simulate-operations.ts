@@ -3,7 +3,7 @@ import { replicate } from "../twin/replicate";
 import { calendarWeekOfDay } from "../twin/season";
 import { buildTwin } from "../twin/twin";
 import { baseShape, scenarioShape, splitScenario } from "./args";
-import { daysSchema, dayLabel, dcName, fmt1, fmtInt, guarded, hours, kpiTable, money, pct, readOnlyOpenWorld, runsSchema, scenarioLine, text, z } from "./shared";
+import { daysSchema, dayLabel, dcName, fmt1, fmtInt, guarded, hours, kpiTable, money, pct, readOnlyOpenWorld, runsSchema, scenarioLine, text, twinLink, z } from "./shared";
 
 export const simulateOperationsConfig = {
   title: "Simulate the floor",
@@ -87,6 +87,9 @@ export async function simulateOperationsHandler(args: Args) {
         late.length ? `\nLatest trucks in run 1: ${late.map((t) => `${t.store} ${dayLabel(t.day)} ${t.loadedAt === null ? "never loaded" : `${hours(t.lateMin)} late`}`).join("; ")}.` : ``,
         ``,
         `Dollars are candystore retail value. Inbound volume follows the buyers' ${ctx.policy.forecast} forecast at ${pct(ctx.policy.serviceLevel)} cycle service; the first weeks of stock come from an eight-week warm-up. ${money(k.cutDollars)} of orders were cut for lack of stock on average.`,
+        ``,
+        // Run 1 is seed 1 (replicate runs seeds 1..runs), which is what the page plays.
+        twinLink(dc, startWeek, days, scenario),
       ].join("\n")
     );
   });

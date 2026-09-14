@@ -18,8 +18,13 @@
  * The last shift of the day stays on overtime, up to a cap, while released
  * orders are still unloaded. A truck that is not loaded by its departure time
  * leaves when it is, and the difference is lateness.
+ *
+ * runOperations takes an optional Tracer (lib/trace/types.ts) that observes
+ * the run for the 3D twin: every hook is a null-checked emit after the state
+ * change it reports, so a traced run returns exactly the untraced numbers.
  */
 
+import { NOOP_TRACER, type JobInfo, type TraceEvent, type Tracer } from "../trace/types";
 import { MinHeap } from "../util/heap";
 import { quantile, substream, type Rng } from "../util/random";
 import { ordersReleasedOn, weekdayOf, type StoreOrder } from "./demand";
@@ -204,7 +209,9 @@ interface Job {
   outboundDoor?: OrderState;
   /** First time a free, qualified worker found this job blocked by equipment or a door. */
   heldSince?: number;
-  onDone: (t: number) => void;
+  /** What the job is, for the trace. Data only; required so every push site describes its job. */
+  info: JobInfo;
+  onDone: (t: number, jobId: number) => void;
 }
 
 interface WorkerState {
@@ -255,7 +262,7 @@ const PRIORITY = { load: 0, pack: 1, hotReplen: 1, repick: 1, pick: 2, putaway: 
 /** When a flexing worker looks beyond their primary skill, this is the order they look in. */
 const FLEX_ORDER: Process[] = ["load", "pack", "replenish", "pick", "unload", "receive", "putaway"];
 
-export function runOperations(ctx: TwinContext, opts: OperationsOptions): OperationsResult {
+export function runOperations(ctx: TwinContext, opts: OperationsOptions, tracer: Tracer = NOOP_TRACER): OperationsResult {
   const { site, layout, catalog, model, std, costs, slotting } = ctx;
   const startWeek = ctx.startWeek;
   const rngFor = (label: string): Rng => substream(opts.seed, `${label}-${site.id}`);
@@ -264,6 +271,10 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
   const orderRng = rngFor("orders");
   const dis = opts.disruptions;
   const horizonEnd = opts.days * 1440;
+  // Observational only: every hook is `trace?.({...})`, so with the no-op
+  // tracer no event object is built. A hook never draws an RNG, schedules an
+  // event or changes state; trace.test.ts deep-equals traced and untraced runs.
+  const trace = tracer.enabled ? (e: TraceEvent) => tracer.emit(e) : null;
   const skuMap = new Map(catalog.skus.map((s) => [s.id, s]));
   const skuIndex = new Map(catalog.skus.map((s, i) => [s.id, i]));
   const lastShiftId = [...site.shifts].sort((a, b) => hhmm(a.start) + shiftPaidHours(a.start, a.end) * 60 - (hhmm(b.start) + shiftPaidHours(b.start, b.end) * 60)).at(-1)!.id;
@@ -331,11 +342,56 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
   }
   const retailStart = book.retailValue();
   const reserveLoc = (sku: string): Location => layout.reserve[(skuIndex.get(sku) ?? 0) % layout.reserve.length];
+  trace?.({
+    k: "init",
+    t: 0,
+    dc: site.id,
+    startWeek,
+    days: opts.days,
+    seed: opts.seed,
+    horizonEnd,
+    layoutName: layout.spec.name,
+    forklifts: site.equipment.forklifts,
+    palletJacks: site.equipment.palletJacks,
+    inDoors: layout.doors.filter((x) => x.kind === "inbound").map((x) => x.id),
+    outDoors: layout.doors.filter((x) => x.kind === "outbound").map((x) => x.id),
+    shifts: site.shifts.map((s) => ({ id: s.id, start: s.start, end: s.end, breakMin: s.breakMin, indirectMin: s.indirectMin })),
+    operatingDays: [...site.operatingDays],
+    times: { orderRelease: site.times.orderRelease, truckDeparture: site.times.truckDeparture, inboundWindow: [site.times.inboundWindow[0], site.times.inboundWindow[1]] },
+    std: { ...std },
+    workers: ctx.workers.map((w) => ({
+      id: w.id,
+      role: w.role,
+      type: w.type,
+      skills: [...w.skills],
+      productivity: w.productivity * (w.type === "temp" ? costs.tempProductivity : 1),
+      hourlyRate: w.type === "temp" ? costs.tempHourly : w.hourlyRate,
+      overtimeMultiplier: w.type === "temp" ? 1 : costs.overtimeMultiplier,
+    })),
+    outages: {
+      forklifts: dis.forkliftOutages.map((o) => ({ fromDay: o.fromDay, toDay: o.toDay, count: o.count })),
+      inDoors: dis.doorOutages.filter((o) => o.kind === "inbound").map((o) => ({ fromDay: o.fromDay, toDay: o.toDay, count: o.count })),
+      outDoors: dis.doorOutages.filter((o) => o.kind === "outbound").map((o) => ({ fromDay: o.fromDay, toDay: o.toDay, count: o.count })),
+    },
+    faceCap: catalog.skus.map((s) => [s.id, (ctx.faces.get(s.id) ?? site.pick.faceCases) * s.innersPerCase]),
+    face: [...face],
+    reserve: [...reserve],
+    reserveLoc: catalog.skus.map((s) => [s.id, reserveLoc(s.id).id]),
+  });
 
   // --- State ---
   const events = new MinHeap<() => void>();
   let now = 0;
   const at = (t: number, fn: () => void) => events.push(t, fn);
+  // One "wms down" per outage window: dispatch runs after every event while
+  // the system is down, so the window's end deduplicates. Tracer-only state.
+  let wmsNoted = -1;
+  const noteWms = (until: number) => {
+    if (trace && until !== wmsNoted) {
+      wmsNoted = until;
+      trace({ k: "wms", t: now, down: true, until });
+    }
+  };
   const queues: Record<Process, Job[]> = Object.fromEntries(PROCESSES.map((p) => [p, []])) as unknown as Record<Process, Job[]>;
   let jobSeq = 0;
   const stats: Record<Process, ProcessStats> = Object.fromEntries(
@@ -389,6 +445,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     const j = { ...job, id: ++jobSeq };
     queues[j.process].push(j);
     stats[j.process].maxQueue = Math.max(stats[j.process].maxQueue, queues[j.process].length);
+    trace?.({ k: "jobQueued", t: now, job: j.id, process: j.process, priority: j.priority, queueLen: queues[j.process].length, info: j.info });
   };
 
   // --- Workers ---
@@ -452,13 +509,15 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     const s = skuMap.get(sku)!;
     const from = reserveLoc(sku);
     const to = slotting.get(sku)!;
+    const feet = rackToRack(layout, from, to);
     pushJob({
       process: "replenish",
       ready: now,
       priority: hot ? PRIORITY.hotReplen : PRIORITY.replen,
-      std: std.replenHandling + (2 * rackToRack(layout, from, to)) / std.forkliftFtPerMin + 2 * from.level * std.liftMinPerLevel,
+      std: std.replenHandling + (2 * feet) / std.forkliftFtPerMin + 2 * from.level * std.liftMinPerLevel,
       forklift: true,
-      onDone: () => {
+      info: { kind: "replen", sku, hot, from: from.id, to: to.id, feet },
+      onDone: (_t, jobId) => {
         replenPending.delete(sku);
         pickFace.replenishments++;
         if (hot) pickFace.hotReplenishments++;
@@ -470,16 +529,18 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
         const moved = Math.min(reserve.get(sku) ?? 0, cases * s.innersPerCase);
         reserve.set(sku, (reserve.get(sku) ?? 0) - moved);
         face.set(sku, (face.get(sku) ?? 0) + moved);
+        trace?.({ k: "face", t: now, sku, face: face.get(sku) ?? 0, reserve: reserve.get(sku) ?? 0, delta: moved, reason: "replen", job: jobId });
         pendingRepicks.delete(sku);
         for (const r of waiting) queueRepick(r);
       },
     });
   };
 
-  const takeFromFace = (os: OrderState, sku: string, inners: number) => {
+  const takeFromFace = (os: OrderState, sku: string, inners: number, jobId: number) => {
     const have = face.get(sku) ?? 0;
     const took = Math.min(have, inners);
     face.set(sku, have - took);
+    trace?.({ k: "face", t: now, sku, face: have - took, reserve: reserve.get(sku) ?? 0, delta: -took, reason: "pick", order: os.order.id, job: jobId });
     if (took > 0) book.consume(sku, took);
     const short = inners - took;
     if (short > 0) {
@@ -488,6 +549,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
       list.push({ order: os, sku, inners: short });
       pendingRepicks.set(sku, list);
       os.pending++;
+      trace?.({ k: "short", t: now, order: os.order.id, sku, inners: short, hot: (reserve.get(sku) ?? 0) > 0, job: jobId });
       if ((reserve.get(sku) ?? 0) > 0) requestReplen(sku, true);
       // Nothing in reserve and nothing on its way to the face: re-pick now,
       // take what the face has, and ship the rest short rather than wait forever.
@@ -502,15 +564,18 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
 
   const queueRepick = (r: PendingRepick) => {
     const loc = slotting.get(r.sku)!;
+    const feet = 2 * depotDistance(layout, loc);
     pushJob({
       process: "pick",
       ready: now,
       priority: PRIORITY.repick,
-      std: (2 * depotDistance(layout, loc)) / std.walkFtPerMin + std.pickPerLine + std.pickPerInner * r.inners + (GOLDEN_LEVELS.has(loc.level) ? 0 : std.pickBendReachSec / 60),
-      onDone: () => {
+      std: feet / std.walkFtPerMin + std.pickPerLine + std.pickPerInner * r.inners + (GOLDEN_LEVELS.has(loc.level) ? 0 : std.pickBendReachSec / 60),
+      info: { kind: "repick", order: r.order.order.id, sku: r.sku, inners: r.inners, loc: loc.id, feet },
+      onDone: (_t, jobId) => {
         const have = face.get(r.sku) ?? 0;
         const took = Math.min(have, r.inners);
         face.set(r.sku, have - took);
+        trace?.({ k: "face", t: now, sku: r.sku, face: have - took, reserve: reserve.get(r.sku) ?? 0, delta: -took, reason: "repick", order: r.order.order.id, job: jobId });
         if (took > 0) book.consume(r.sku, took);
         const short = r.inners - took;
         // Another tour got to the face first. If the reserve still holds
@@ -520,6 +585,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
           const list = pendingRepicks.get(r.sku) ?? [];
           list.push(r);
           pendingRepicks.set(r.sku, list);
+          trace?.({ k: "short", t: now, order: r.order.order.id, sku: r.sku, inners: short, hot: true, job: jobId });
           requestReplen(r.sku, true);
           return;
         }
@@ -529,6 +595,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
           const s = book.skus.get(r.sku)!;
           s.allocated = Math.max(0, s.allocated - short);
           r.order.inners -= short;
+          trace?.({ k: "shortShip", t: now, order: r.order.order.id, sku: r.sku, inners: short, job: jobId });
         }
         maybePack(r.order);
       },
@@ -540,8 +607,10 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     const pallets = os.inners > 0 ? Math.max(1, Math.ceil(os.cube / std.palletCubeFt)) : 0;
     if (pallets === 0) {
       os.loadedAt = now;
+      trace?.({ k: "orderCut", t: now, order: os.order.id });
       return;
     }
+    trace?.({ k: "orderPicked", t: now, order: os.order.id, pallets, inners: os.inners });
     let left = pallets;
     for (let i = 0; i < pallets; i++) {
       pushJob({
@@ -549,8 +618,10 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
         ready: now,
         priority: PRIORITY.pack,
         std: std.packPerPallet,
-        onDone: () => {
+        info: { kind: "pack", order: os.order.id, pallet: i, pallets },
+        onDone: (_t, jobId) => {
           left--;
+          trace?.({ k: "palletPacked", t: now, order: os.order.id, index: i, left, job: jobId });
           if (left > 0) return;
           pushJob({
             process: "load",
@@ -559,7 +630,8 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
             std: std.loadPerTruck + pallets * std.loadPerPallet,
             palletJack: true,
             outboundDoor: os,
-            onDone: (t) => {
+            info: { kind: "load", order: os.order.id, store: os.order.storeName, pallets, departAt: os.departAt },
+            onDone: (t, jobId) => {
               os.loadedAt = t;
               const truck: TruckRecord = { order: os.order.id, store: os.order.storeName, day: os.day, departAt: os.departAt, loadedAt: t, lateMin: Math.max(0, t - os.departAt), pallets, inners: os.inners };
               os.truck = truck;
@@ -569,10 +641,12 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
                 daily[os.day].trucksLate++;
                 daily[os.day].lateMin += truck.lateMin;
               }
+              trace?.({ k: "truckLoaded", t: now, order: os.order.id, store: os.order.storeName, day: os.day, departAt: os.departAt, lateMin: truck.lateMin, pallets, inners: os.inners, cycleFloorMin: floorMinutesBetween(os.releasedAt, t), job: jobId });
               // The trailer holds its door until it pulls out.
               at(Math.max(t, os.departAt), () => {
                 accrueResources(now);
                 busy.outDoor--;
+                trace?.({ k: "truckDepart", t: now, order: os.order.id });
               });
             },
           });
@@ -584,6 +658,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
   const release = (d: number) => {
     const down = wmsDownUntil(now);
     if (down !== null) {
+      noteWms(down);
       at(down, () => release(d));
       return;
     }
@@ -610,21 +685,35 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
       };
       orders.push(os);
       const tours = buildTours(os.order, slotting, skuMap, std);
+      trace?.({
+        k: "orderRelease",
+        t: now,
+        order: os.order.id,
+        store: os.order.store,
+        storeName: os.order.storeName,
+        day: order.departDay,
+        departAt: os.departAt,
+        lines: alloc.map(({ sku, inners, cut }) => ({ sku, inners, cut })),
+        cube: os.cube,
+        inners: os.inners,
+        tours: tours.length,
+      });
       if (tours.length === 0) {
         maybePack(os);
         continue;
       }
       os.pending = tours.length;
-      for (const tour of tours) {
+      for (const [i, tour] of tours.entries()) {
         const m = tourMinutes(layout, tour, std);
         pushJob({
           process: "pick",
           ready: now,
           priority: PRIORITY.pick,
           std: m.walk + m.handle,
-          onDone: () => {
+          info: { kind: "pick", order: os.order.id, tour: i, tours: tours.length, lines: tour.map((l) => ({ sku: l.sku, inners: l.inners, loc: l.loc.id })), feet: m.feet, walkMin: m.walk, handleMin: m.handle, bends: m.bends },
+          onDone: (_t, jobId) => {
             os.pending--;
-            for (const l of tour) takeFromFace(os, l.sku, l.inners);
+            for (const l of tour) takeFromFace(os, l.sku, l.inners, jobId);
             maybePack(os);
           },
         });
@@ -641,6 +730,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     inboundPalletsTotal += pallets.length;
     palletsInFlight += pallets.length;
     const importer = book.suppliers.get(po.supplier)?.kind === "importer";
+    trace?.({ k: "truckArrive", t: now, po: po.id, supplier: po.supplier, importer, day: d, pallets: pallets.map((p) => ({ items: p.items.map((it) => ({ sku: it.sku, cases: it.cases })), mixed: p.mixed })) });
     const inDoors = layout.doors.filter((x) => x.kind === "inbound");
     waitingTrucks.push({
       arrivedAt,
@@ -648,6 +738,9 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
         doorWaits.push(now - arrivedAt);
         let left = pallets.length;
         const door = inDoors[busy.inDoor % Math.max(1, inDoors.length)] ?? { x: 0, y: 0 };
+        // The door putaway distance is measured from; not a stable slot (the compiler assigns the visual door).
+        const engineDoor = "id" in door ? door.id : null;
+        trace?.({ k: "truckDock", t: now, po: po.id, engineDoor, waitMin: now - arrivedAt });
         pallets.forEach((p, i) => {
           pushJob({
             process: "unload",
@@ -655,11 +748,13 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
             priority: PRIORITY.unload,
             std: std.unloadPerPallet + (i === 0 ? std.unloadPerTruck : 0),
             palletJack: true,
+            info: { kind: "unload", po: po.id, pallet: i, pallets: pallets.length, engineDoor, items: p.items.map((it) => ({ sku: it.sku, cases: it.cases })) },
             onDone: () => {
               left--;
               if (left === 0) {
                 accrueResources(now);
                 busy.inDoor--;
+                trace?.({ k: "truckUndock", t: now, po: po.id });
                 startTrucks();
               }
               const cases = p.items.reduce((a, it) => a + it.cases, 0);
@@ -668,6 +763,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
                 ready: now,
                 priority: PRIORITY.receive,
                 std: std.receivePerPallet + cases * std.receivePerCase + (importer ? cases * std.labelPerImportCase : 0),
+                info: { kind: "receive", po: po.id, pallet: i, engineDoor, cases, importer },
                 onDone: () => {
                   // A mixed pallet is driven down the reserve aisles once and
                   // dropped SKU by SKU: travel to the farthest location, a
@@ -681,16 +777,19 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
                     priority: PRIORITY.putaway,
                     std: std.putawayHandling * p.items.length + (2 * far) / std.forkliftFtPerMin + lifts,
                     forklift: true,
-                    onDone: () => {
+                    info: { kind: "putaway", po: po.id, pallet: i, engineDoor, items: p.items.map((it, k) => ({ sku: it.sku, cases: it.cases, loc: locs[k].id })), farFt: far, liftMin: lifts },
+                    onDone: (_t, jobId) => {
                       for (const it of p.items) {
                         const s = skuMap.get(it.sku)!;
                         const inners = it.cases * s.innersPerCase;
                         book.receive(it.sku, inners);
                         reserve.set(it.sku, (reserve.get(it.sku) ?? 0) + inners);
+                        trace?.({ k: "face", t: now, sku: it.sku, face: face.get(it.sku) ?? 0, reserve: reserve.get(it.sku) ?? 0, delta: 0, reason: "putaway", job: jobId });
                         if ((face.get(it.sku) ?? 0) <= s.innersPerCase) requestReplen(it.sku, false);
                       }
                       palletsInFlight--;
                       dockToStock.push(now - arrivedAt);
+                      trace?.({ k: "putaway", t: now, job: jobId, po: po.id, pallet: i, items: p.items.map((it, k) => ({ sku: it.sku, inners: it.cases * skuMap.get(it.sku)!.innersPerCase, loc: locs[k].id })), dockToStockMin: now - arrivedAt });
                     },
                   });
                 },
@@ -757,6 +856,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     accrueResources(now);
     if (job.forklift) busy.forklift++;
     if (job.palletJack) busy.palletJack++;
+    const outDoorAcquired = !!job.outboundDoor && !job.outboundDoor.doorHeld;
     if (job.outboundDoor && !job.outboundDoor.doorHeld) {
       job.outboundDoor.doorHeld = true;
       busy.outDoor++;
@@ -766,19 +866,23 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     const st = stats[job.process];
     st.jobs++;
     st.waitTotalMin += wait;
-    if (job.heldSince !== undefined) st.equipmentWaitMin += floorMinutesBetween(job.heldSince, now);
+    const equipWait = job.heldSince !== undefined ? floorMinutesBetween(job.heldSince, now) : 0;
+    if (job.heldSince !== undefined) st.equipmentWaitMin += equipWait;
     st.waitMaxMin = Math.max(st.waitMaxMin, wait);
     const dur = Math.max(0.1, job.std / ws.productivity);
     st.busyMin += dur;
     ws.rec.busyHours += dur / 60;
     ws.rec.byProcess[job.process] = (ws.rec.byProcess[job.process] ?? 0) + dur;
     ws.busy = true;
+    trace?.({ k: "jobStart", t: now, job: job.id, worker: ws.w.id, dur, waitMin: wait, equipWaitMin: equipWait, productivity: ws.productivity, outDoorAcquired });
     at(now + dur, () => {
       accrueResources(now);
       if (job.forklift) busy.forklift--;
       if (job.palletJack) busy.palletJack--;
       ws.busy = false;
-      job.onDone(now);
+      // Before onDone, so the end precedes whatever the completion queues or moves.
+      trace?.({ k: "jobEnd", t: now, job: job.id, worker: ws.w.id });
+      job.onDone(now, job.id);
     });
   };
 
@@ -788,17 +892,24 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
     ws.rec.overtimeHours += ot;
     daily[dayOf(ws.shiftStart)].overtimeHours += ot;
     ws.present = false;
+    trace?.({ k: "worker", t: now, id: ws.w.id, state: "out", overtimeMin: ot * 60, shift: ws.shiftId ?? undefined });
   };
 
   const dispatch = () => {
-    if (wmsDownUntil(now) !== null) return;
+    const down = wmsDownUntil(now);
+    if (down !== null) {
+      noteWms(down);
+      return;
+    }
     for (const ws of workers) {
       if (!ws.present || ws.busy || ws.onBreak) continue;
       if (!ws.breakTaken && now >= ws.breakAt && now < ws.shiftEnd) {
         ws.onBreak = true;
         ws.breakTaken = true;
+        trace?.({ k: "worker", t: now, id: ws.w.id, state: "break", breakMin: ws.breakMin });
         at(now + ws.breakMin, () => {
           ws.onBreak = false;
+          trace?.({ k: "worker", t: now, id: ws.w.id, state: "breakEnd" });
         });
         continue;
       }
@@ -831,13 +942,18 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
   for (let d = 0; d < opts.days; d++) {
     const dayStart = d * 1440;
     at(dayStart, () => {
-      book.review(d);
-      if (!site.operatingDays.includes(weekdayOf(d))) return;
+      const placed = book.review(d);
+      const operating = site.operatingDays.includes(weekdayOf(d));
+      trace?.({ k: "day", t: now, day: d, weekday: daily[d].weekday, calendarWeek: daily[d].calendarWeek, operating });
+      for (const po of placed) trace?.({ k: "poPlaced", t: now, po: po.id, supplier: po.supplier, placedDay: po.placedDay, arriveDay: po.arriveDay, pallets: po.pallets, cases: po.lines.reduce((acc, l) => acc + l.cases, 0) });
+      if (!operating) return;
       const [a, b] = site.times.inboundWindow.map(hhmm);
       for (const po of book.arrivals(d)) {
         const appointment = a + arrivalRng() * (b - a);
         const late = dis.inboundLatenessSdMin > 0 ? (arrivalRng() + arrivalRng() + arrivalRng() - 1.5) * 2 * dis.inboundLatenessSdMin : 0;
-        at(dayStart + Math.max(a - 30, appointment + late), () => truckArrives(po, d));
+        const eta = dayStart + Math.max(a - 30, appointment + late);
+        trace?.({ k: "truckScheduled", t: now, po: po.id, supplier: po.supplier, importer: book.suppliers.get(po.supplier)?.kind === "importer", appointment: dayStart + appointment, eta, pallets: po.pallets });
+        at(eta, () => truckArrives(po, d));
       }
     });
     // Evening release for the next day's trucks; the last day's release is
@@ -855,6 +971,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
             if (onLeave(ws, d) || onRoleLeave(ws, d) || attendRng() < dis.absenteeism) {
               ws.rec.absences++;
               daily[d].absences++;
+              trace?.({ k: "worker", t: now, id: ws.w.id, state: "absent", shift: shift.id });
               continue;
             }
             ws.present = true;
@@ -871,11 +988,13 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
             if (ws.onBreak) {
               at(start + shift.indirectMin, () => {
                 ws.onBreak = false;
+                trace?.({ k: "worker", t: now, id: ws.w.id, state: "indirectEnd" });
               });
             }
             ws.rec.shiftsWorked++;
             ws.rec.primaries[as.primary] = (ws.rec.primaries[as.primary] ?? 0) + 1;
             ws.rec.paidHours += (end - start - shift.breakMin) / 60;
+            trace?.({ k: "worker", t: now, id: ws.w.id, state: "in", shift: shift.id, primary: as.primary, shiftStart: start, shiftEnd: end, breakAt: ws.breakAt, breakMin: shift.breakMin, indirectMin: shift.indirectMin, lastShift: ws.lastShift });
           }
         });
         // Wake-ups only: dispatch runs after every event and handles clocking
@@ -890,7 +1009,12 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
   at(0, () => release(-1));
   // Wake-ups for WMS recovery and door or forklift outages ending, so idle
   // workers look again when capacity comes back.
-  for (const [, e] of wmsWindows) at(e, () => {});
+  for (const [, e] of wmsWindows) {
+    at(e, () => {
+      // "up" only after this window's "down": a window nobody dispatched in never went down for the trace.
+      if (wmsNoted === e) trace?.({ k: "wms", t: now, down: false });
+    });
+  }
   for (const o of [...dis.doorOutages, ...dis.forkliftOutages]) at((o.toDay + 1) * 1440, () => startTrucks());
 
   // --- Run ---
@@ -906,6 +1030,7 @@ export function runOperations(ctx: TwinContext, opts: OperationsOptions): Operat
   now = horizonEnd;
   accrueResources(now);
   for (const ws of workers) if (ws.present) clockOut(ws);
+  trace?.({ k: "end", t: horizonEnd });
 
   // --- Late or missing trucks ---
   for (const os of orders) {

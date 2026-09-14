@@ -3,6 +3,7 @@
 **A digital twin of a candy distribution center.** [candystore_mcp](https://github.com/Jaysunnn8solutions/candystore_mcp) decides what its stores sell and which of its two distribution centers supplies them; this project runs those two buildings minute by minute. Supplier trucks, unloading, receiving, putaway, pick-face replenishment, store-order picking, packing, loading, and the people, forklifts and doors doing it, through the Halloween and Christmas peaks. An [MCP](https://modelcontextprotocol.io) server over a discrete-event simulation, with a small web page.
 
 **Live site:** `https://digitaltwin-mcp.vercel.app` · **Import your building:** `https://digitaltwin-mcp.vercel.app/import`
+**3D twin:** `https://digitaltwin-mcp.vercel.app/twin`
 **Remote MCP endpoint:** `https://digitaltwin-mcp.vercel.app/mcp`
 **Local MCP server:** `npm run mcp:stdio` (adds `render_floor`, which writes the floor plan to an HTML file, and imports files by path, IFC included)
 
@@ -72,6 +73,19 @@ All of them live in `lib/layout/limits.ts`. `public/samples/` has the same sampl
 
 ---
 
+## Watch it run in 3D
+
+`https://digitaltwin-mcp.vercel.app/twin` plays a run back in three dimensions in your browser: supplier trucks backing onto the doors, pallets unloaded and put away, pickers walking S-shape tours through the aisles, forklifts replenishing faces, pallets packed, staged and loaded, and the store trucks leaving on time or late, with the queues, the pick faces and the KPIs as they accrue.
+
+- **Same engine, same numbers.** The page runs `lib/twin/operations.ts` in a Web Worker and records its event stream. Nothing is animated that the engine did not do, and the HUD's figures equal the tools' KPIs at the end of the run. What the engine does not decide (which forklift, which door, walking between jobs, staging lanes, the yard) is synthesized as a deterministic function of the event stream, so the same seed always plays back the same way and the animation never feeds back into the results. The inspector shows engine facts and synthesized detail separately, with how each job's animation was fitted into its engine duration.
+- **Seed 1 replays a tool's first run.** `simulate_operations` and `what_if` end with a link carrying the building, week, days and scenario. `replicate()` runs seeds 1..runs, so the page's seed 1 is run 1 of the table. The URL hash holds everything (`lib/twin-ui/hash.ts`: the scenario deflated and base64url-encoded, 6 KB at most); the server is never involved.
+- **Scenarios.** Every scenario field, in tabs: labor (shifts, operating days, roster, cross-training, per-worker productivity, standards), supply (forecast, service level, supplier lead times and delays, inbound window and lateness), deliveries (demand, shocks, delivery days, release and departure times), space (slotting, face sizes, doors, forklifts, rack zones; an imported building comes from the `/import` page's "Open in 3D") and disruptions (door, forklift and WMS outages). Compare a run against the previous one on the timeline.
+- **Playback.** Scrub, 1× to 1800×, skip the hours when nobody is on the floor, follow a worker or a truck, walk the floor in first person, presets for the dock, the pick module, the reserve and the yard. Lighting follows the simulated clock.
+
+Nothing is stored. The run lives in the browser tab, and an imported drawing stays there too.
+
+---
+
 ## Model
 
 **Network.** candystore's market model sets each store's annual retail dollars by category (traditional, plus specialty candy for heritage segments) and its supplying center. `data/network.json` is a snapshot of candystore's live API; tools that take a `candystore` scenario (stores added or closed) call the API for that scenario instead.
@@ -122,6 +136,7 @@ Every simulation tool takes the same scenario fields, so a conversation can chai
 - **People:** `addWorkers`, `removeWorkers`, `crossTrain`, `workerLeave`, `absenteeism`.
 - **Facility:** `forklifts`, `palletJacks`, `inboundDoors`, `outboundDoors`, `faceCases`.
 - **Disruptions:** `doorOutages`, `forkliftOutages`, `wmsOutages`, `supplierDelays`.
+- **Added with the 3D twin:** `shifts` (patterns, breaks, indirect time), `operatingDays`, `times` (order release, truck departure, inbound window), `deliveryDays` by store type, `workerOverrides` (productivity, weekly hours, wage), `standards` (the engineered minutes and speeds), `supplierOverrides` (lead time, its variability, order day), `inboundLatenessSdMin`, and `rackZones` to re-rack a built-in building (ignored, with a note, when a `layout` is imported).
 
 Days count from 0, the Monday of `startWeek`. Three prompts package common chains: `peak_readiness`, `disruption_drill`, `expansion_impact`. Resources expose the manifest, the candystore snapshot, the buildings and the method.
 
@@ -162,13 +177,17 @@ pipeline/         candystore snapshot, catalog and roster generators
 data/             committed network, catalog, roster, sites, manifest
 lib/util/         seeded random streams, event heap
 lib/layout/       layout spec and limits; DXF, CSV, GeoJSON (IMDF, Indoors) and IFC importers; the shared assembler; samples
-lib/twin/         season, layout (aisles and locations from a spec), demand, slotting, inventory, workforce, operations (DES), replicate, twin (scenario → context)
+lib/twin/         season, layout (aisles and locations from a spec), demand, slotting, inventory, workforce, operations (DES, with trace hooks), replicate, twin (scenario → context), scenario-ext (the 3D twin's fields)
+lib/trace/        the engine's event contract and the compiler: world, exact paths, identities (which forklift, door, lane), fit, running KPIs, cursor → typed-array playback
+lib/three/        the three.js renderer: building, racks, actors, cameras, walk mode, picking, lighting, labels, viewer
+lib/twin-worker/  the browser run: bundled data, buildTwin, runOperations with a tracer, compile, transfer
+lib/twin-ui/      the URL hash codec shared by the page and the tools' links
 lib/tools/        MCP tools, prompts, resources, one registration for both transports
 lib/render/       the floor-plan SVG, shared by page, browser preview and render_floor
-components/       the import workbench and its Web Worker
+components/       the import workbench and its Web Worker; components/twin/ the 3D workbench, scene, timeline, inspector and the simulation worker
 app/mcp/          remote MCP endpoint (mcp-handler)
 app/api/twin/     stateless simulation of an imported layout
-app/page.tsx      the web page; app/import/ the upload page
+app/page.tsx      the web page; app/import/ the upload page; app/twin/ the 3D twin
 mcp/stdio.ts      local MCP server (StdioServerTransport) + render_floor
 ```
 
@@ -192,7 +211,8 @@ npm run test:client -- stdio                   # every tool over stdio, plus ren
 
 - The volumes are candystore's, and candystore is five stores, so the buildings are small. The dynamics (time-window capacity, single points of failure, face sizing) are what carry over to a real building, not the headcounts.
 - Standards, costs, the roster and the buildings are placeholders. Calibrate `lib/twin/standards.ts` and `data/` before trusting a number.
-- One shift, Monday to Friday. A second shift can be approximated with a `shifts` edit in `data/sites.json`; the planner and the simulation both read it, but the default calendar was only tuned for one.
+- One shift, Monday to Friday, by default. The `shifts` and `operatingDays` scenario fields change that; the planner and the simulation both read them, but the default calendar was only tuned for one shift.
+- The 3D page runs in the browser and stops at 28 days (the tools go to 56). candystore store scenarios go through the tools only, because candystore's API is fetched server-side. A second shift is approximated: planning assigns the outbound work to the shift on the floor at 19:30, and the animation of a job that spans a shift change is fitted, not re-planned.
 - Reserve locations are fixed per SKU and capacity is checked, not enforced: overflow is reported, not simulated as floor stacking.
 - The labor plan works in weekly hours and the floor in cutoffs, so a plan that balances can still ship late. `plan_labor` checks its peak week on the floor for that reason.
 - Imports read plan geometry, not engineering detail: DXF arc bulges become straight segments and HATCH fills are skipped; rack levels come from the `levels` option unless a CSV or IFC says otherwise; one floor is modelled; and aisles are assumed to run front to back from a cross aisle on the dock side. Always read the import report before trusting a result.

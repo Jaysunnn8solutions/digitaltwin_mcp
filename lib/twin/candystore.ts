@@ -11,7 +11,10 @@
 
 import type { Network, NetworkDc, NetworkStore } from "./types";
 
-export const CANDYSTORE_URL = process.env.CANDYSTORE_URL || "https://candystore-mcp.vercel.app";
+// Read through globalThis rather than a bare `process`: this module is in the
+// browser worker's graph, where there is no Node environment to consult.
+export const CANDYSTORE_URL =
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.CANDYSTORE_URL || "https://candystore-mcp.vercel.app";
 
 export interface CandystoreScenario {
   add?: Array<{ type: "general" | "specialty"; lon: number; lat: number; size?: number; segments?: string[]; name?: string; dc?: string }>;

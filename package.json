@@ -8,6 +8,7 @@
     "dev": "next dev",
     "prebuild": "node scripts/copy-wasm.mjs",
     "build": "next build",
+    "postbuild": "node scripts/assert-no-node-builtins.mjs",
     "samples": "tsx scripts/make-samples.ts",
     "start": "next start",
     "lint": "eslint",
@@ -15,7 +16,9 @@
     "test": "vitest run",
     "pipeline": "tsx pipeline/index.ts",
     "mcp:stdio": "tsx mcp/stdio.ts",
-    "test:client": "tsx scripts/test-client.ts"
+    "test:client": "tsx scripts/test-client.ts",
+    "twin:shots": "node scripts/screenshot-twin.mjs",
+    "twin:perf": "node scripts/perf-twin.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -27,6 +30,7 @@
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "three": "0.186.0",
     "web-ifc": "0.0.77",
     "zod": "^4.6.1"
   },
@@ -39,6 +43,7 @@
     "@types/node": "^24.13.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "0.186.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "tsx": "^4.23.13",

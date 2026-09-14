@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { loadNetwork, loadSites } from "@/lib/data/load";
 import { twinFloorSvg } from "@/lib/render/twin-floor";
+import { SITE_URL } from "@/lib/tools/shared";
 import { replicate } from "@/lib/twin/replicate";
 import { buildTwin } from "@/lib/twin/twin";
 
@@ -18,8 +19,8 @@ const TOOLS: Array<[string, string]> = [
   ["get_layout · get_workforce", "The building, the slotting, the crew and the standards."],
 ];
 
-/** Vercel sets the production domain at build time; locally the dev server's. */
-const ENDPOINT = process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/mcp` : "http://localhost:3000/mcp";
+/** The same origin the tools put in their links: Vercel's production domain at build time, locally the dev server's. */
+const ENDPOINT = `${SITE_URL}/mcp`;
 
 function money(d: number) {
   return d >= 1e6 ? `$${(d / 1e6).toFixed(1)}M` : `$${Math.round(d / 1e3)}k`;
@@ -50,6 +51,12 @@ export default async function Home() {
           <b>Run the twin in your own building →</b>
         </Link>{" "}
         <span className="sub">Upload a CAD drawing (DXF), a WMS location list, ArcGIS Indoors or IMDF data, or an IFC model.</span>
+      </p>
+      <p>
+        <Link href="/twin">
+          <b>Watch the twin run in 3D →</b>
+        </Link>{" "}
+        <span className="sub">The same engine in your browser: trucks, tours, replenishments and the crew, minute by minute, with every scenario field.</span>
       </p>
 
       <div className="grid">

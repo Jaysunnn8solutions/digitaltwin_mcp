@@ -7,7 +7,8 @@
  */
 
 import { z } from "zod";
-import { findSite, loadCatalog, loadNetwork, loadRoster, UnknownIdError } from "../data/load";
+// The pure store, never ../data/load: this module runs in the browser worker too.
+import { dataVersion, findSite, loadCatalog, loadNetwork, loadRoster, UnknownIdError } from "../data/store";
 import { fetchNetwork } from "./candystore";
 import { buildDemandModel, type DemandModel } from "./demand";
 import { DEFAULT_POLICY, type InventoryPolicy, type SupplierDelay } from "./inventory";
@@ -16,6 +17,7 @@ import { layoutSpecSchema, type LayoutSpec } from "../layout/spec";
 import { buildLayout, siteToSpec, withDoorCounts, type Layout } from "./layout";
 import { NO_DISRUPTIONS, type Disruptions, type OperationsOptions } from "./operations";
 import { ROLE_KEYS, ROLES } from "./roles";
+import { applySiteExtensions, applyWorkerExtensions, extensionCatalog, extensionDisruptions, extensionShape, extensionStandards } from "./scenario-ext";
 import {
   evaluateSlotting,
   faceSizesFor,
@@ -111,6 +113,9 @@ export const scenarioShape = {
   outboundDoors: z.number().int().min(1).max(20).optional(),
   faceCases: z.number().int().min(1).max(8).optional().describe("Pick-face capacity in master cases."),
   targetUtilization: z.number().min(0.5).max(1).optional().describe("Labor planning target, busy share of productive hours. Default 0.85."),
+  // Shifts, operating and delivery days, the site's clock, worker overrides,
+  // standards, supplier lead times, inbound lateness and rack zones.
+  ...extensionShape,
 };
 
 export const scenarioSchema = z.object(scenarioShape).strict();
@@ -223,6 +228,9 @@ function applySite(base: Site, s: TwinScenario, changes: string[]): Site {
   set("inbound doors", site.doors.inbound, s.inboundDoors, (v) => (site.doors.inbound = v));
   set("outbound doors", site.doors.outbound, s.outboundDoors, (v) => (site.doors.outbound = v));
   set("pick-face cases", site.pick.faceCases, s.faceCases, (v) => (site.pick.faceCases = v));
+  // Last, so the extensions see the overrides above and run before siteToSpec
+  // and applyWorkers (addWorkers may name a shift the scenario introduced).
+  applySiteExtensions(site, s, changes, !!s.layout);
   return site;
 }
 
@@ -244,14 +252,16 @@ const contextCache = new Map<string, TwinContext>();
 
 /** Build the context. Async only because a candystore scenario is fetched live. */
 export async function buildTwin(dc: string, startWeek: number, scenario: TwinScenario = {}): Promise<TwinContext> {
-  const key = JSON.stringify([dc, startWeek, scenario]);
+  // Keyed on the data version too, so a worker that calls setData again never
+  // serves a context built from the previous bundle.
+  const key = JSON.stringify([dataVersion(), dc, startWeek, scenario]);
   const hit = contextCache.get(key);
   if (hit) return hit;
 
   const changes: string[] = [];
   const baseSite = findSite(dc);
   const site = applySite(baseSite, scenario, changes);
-  const catalog = loadCatalog();
+  const catalog = extensionCatalog(loadCatalog(), scenario, changes);
   let network = loadNetwork();
   if (scenario.candystore && ((scenario.candystore.add?.length ?? 0) > 0 || (scenario.candystore.remove?.length ?? 0) > 0)) {
     network = await fetchNetwork(scenario.candystore);
@@ -266,8 +276,8 @@ export async function buildTwin(dc: string, startWeek: number, scenario: TwinSce
   }
   const spec = scenario.layout ? withDoorCounts(scenario.layout as LayoutSpec, site.doors.inbound, site.doors.outbound) : siteToSpec(site);
   const layout = buildLayout(spec, site);
-  const workers = applyWorkers(site, loadRoster().workers, scenario, changes);
-  const std = DEFAULT_STANDARDS;
+  const workers = applyWorkerExtensions(applyWorkers(site, loadRoster().workers, scenario, changes), scenario, changes);
+  const std = extensionStandards(DEFAULT_STANDARDS, scenario, changes);
   const costs = DEFAULT_COSTS;
   if (scenario.demandScale !== undefined && scenario.demandScale !== 1) changes.push(`demand ×${scenario.demandScale}`);
   for (const sh of scenario.demandShocks ?? []) changes.push(`demand ×${sh.factor} days ${sh.fromDay}–${sh.toDay}${sh.category ? ` (${sh.category})` : ""}`);
@@ -298,7 +308,7 @@ export async function buildTwin(dc: string, startWeek: number, scenario: TwinSce
 /** Operations options from a scenario, with the simulation-only knobs. */
 export function operationsOptions(ctx: TwinContext, days: number, seed: number): OperationsOptions {
   const s = ctx.scenario;
-  const disruptions: Disruptions = {
+  const base: Disruptions = {
     absenteeism: s.absenteeism ?? NO_DISRUPTIONS.absenteeism,
     doorOutages: s.doorOutages ?? [],
     forkliftOutages: s.forkliftOutages ?? [],
@@ -306,6 +316,7 @@ export function operationsOptions(ctx: TwinContext, days: number, seed: number):
     workerLeave: s.workerLeave ?? [],
     inboundLatenessSdMin: NO_DISRUPTIONS.inboundLatenessSdMin,
   };
+  const disruptions = extensionDisruptions(base, s);
   return { days, seed, flex: s.flex ?? true, overtimeMaxHours: s.overtimeMaxHours ?? 2, disruptions, warmupWeeks: 8 };
 }
 
@@ -319,5 +330,7 @@ export function describeDisruptions(s: TwinScenario): string[] {
   for (const l of s.workerLeave ?? []) out.push(`${l.worker ?? `${l.count ?? 1} × ${l.role}`} out days ${l.fromDay}–${l.toDay}`);
   if (s.flex === false) out.push("no flexing outside primary skill");
   if (s.overtimeMaxHours !== undefined) out.push(`overtime cap ${s.overtimeMaxHours} h/day`);
+  // Applied by operationsOptions (extensionDisruptions), so it never reaches ctx.changes; listed here with the other run-time knobs.
+  if (s.inboundLatenessSdMin !== undefined) out.push(`inbound lateness sd ${s.inboundLatenessSdMin} min`);
   return out;
 }
