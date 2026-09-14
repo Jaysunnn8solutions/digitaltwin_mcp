@@ -894,12 +894,13 @@ main.twin-main {
   min-height: 0;
 }
 
+/* Six tabs have to fit a 320–360 px panel: tight padding, and wrapping rather than a scrollbar if a translation or a zoom makes them wider. */
 .twin-tabs {
   display: flex;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--line);
-  padding: 4px 6px 0;
-  gap: 2px;
-  overflow-x: auto;
+  padding: 4px 4px 0;
+  gap: 0;
   flex: 0 0 auto;
 }
 
@@ -908,8 +909,8 @@ main.twin-main {
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: none;
-  padding: 8px 9px;
-  font-size: 13px;
+  padding: 8px 6px;
+  font-size: 12.5px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -1252,6 +1253,127 @@ main.twin-main {
 .twin-compare .runs b {
   display: inline-block;
   width: 18px;
+}
+
+/* report */
+
+.twin-report .head {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.twin-report .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.twin-report .tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.twin-report .tiles div {
+  display: grid;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.twin-report .tiles b {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.twin-report .tiles b.bad {
+  color: var(--twin-bad);
+}
+
+.twin-report .tiles b.good {
+  color: var(--twin-good);
+}
+
+.twin-report .recs {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.twin-report .recs li {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.twin-report .recs p {
+  margin: 4px 0 0;
+}
+
+.twin-report .recs .action {
+  color: var(--twin-info-text, var(--text));
+}
+
+.twin-report .sev {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+
+.twin-report .sev.high {
+  color: var(--twin-bad);
+  border-color: var(--twin-bad);
+}
+
+.twin-report .sev.medium {
+  color: var(--twin-warn-text, var(--twin-warn));
+  border-color: var(--twin-warn-text, var(--twin-warn));
+}
+
+.twin-report .area {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.twin-report .scroll {
+  overflow-x: auto;
+}
+
+.twin-report table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.twin-report th,
+.twin-report td {
+  padding: 3px 6px 3px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.twin-report th:first-child,
+.twin-report td:first-child {
+  text-align: left;
+}
+
+.twin-report tr.bad td {
+  color: var(--twin-bad);
 }
 
 /* network inset */

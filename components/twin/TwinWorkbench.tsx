@@ -27,6 +27,7 @@ import Hud, { type HudSnapshot } from "./Hud";
 import Inspector from "./Inspector";
 import Minimap from "./Minimap";
 import NetworkInset from "./NetworkInset";
+import ReportPanel from "./ReportPanel";
 import ScenarioPanel, { Datalists, type FormContext, type ScenarioTab } from "./ScenarioPanel";
 import Deliveries from "./tabs/Deliveries";
 import Disruptions from "./tabs/Disruptions";
@@ -62,7 +63,7 @@ export interface RunRecord {
 
 type Status = { kind: "idle" } | { kind: "running"; phase: string; day: number; days: number } | { kind: "error"; name: string; message: string };
 
-type SideTab = "scenario" | "inspector" | "network" | "compare" | "help";
+type SideTab = "scenario" | "inspector" | "network" | "compare" | "report" | "help";
 
 interface ViewFlags {
   heat: boolean;
@@ -849,6 +850,7 @@ export default function TwinWorkbench() {
                 ["inspector", "Inspector"],
                 ["network", "Network"],
                 ["compare", "Compare"],
+                ["report", "Report"],
                 ["help", "Help"],
               ] as Array<[SideTab, string]>
             ).map(([id, label]) => (
@@ -930,6 +932,12 @@ export default function TwinWorkbench() {
           {tab === "compare" && (
             <div className="twin-tabbody" role="tabpanel" id="twin-panel-compare" aria-labelledby="twin-tab-compare">
               <ComparePanel a={previous ? { label: previous.label, kpis: previous.kpis, changes: previous.world.changes } : null} b={current ? { label: current.label, kpis: current.kpis, changes: current.world.changes } : null} onSwap={swapRuns} />
+            </div>
+          )}
+          {tab === "report" && (
+            <div className="twin-tabbody" role="tabpanel" id="twin-panel-report" aria-labelledby="twin-tab-report">
+              {/* The records themselves, not copies: their identity is stable between renders, so the report is built once per run. */}
+              <ReportPanel run={current} previous={previous} />
             </div>
           )}
           {tab === "help" && (
