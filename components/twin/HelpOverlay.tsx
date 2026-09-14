@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 /** The keyboard map (design F), also the source of the first-run hint. */
 export const KEY_MAP: ReadonlyArray<[keys: string, what: string]> = [
   ["Space", "play / pause"],
@@ -28,12 +30,22 @@ interface Props {
 }
 
 export default function HelpOverlay({ open, onClose }: Props) {
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  // A dialog takes focus when it opens (its Close button) and gives it back where it was when it closes.
+  useEffect(() => {
+    if (!open) return;
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => {
+      before?.focus();
+    };
+  }, [open]);
   if (!open) return null;
   return (
-    <div className="twin-help" role="dialog" aria-label="Keyboard shortcuts">
+    <div className="twin-help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
       <div className="row" style={{ marginTop: 0, justifyContent: "space-between" }}>
         <h3>How to drive the twin</h3>
-        <button type="button" onClick={onClose}>
+        <button type="button" ref={closeRef} onClick={onClose}>
           Close
         </button>
       </div>

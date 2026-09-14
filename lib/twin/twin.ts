@@ -249,6 +249,25 @@ function validateCategories(network: Network, catalog: Catalog, s: TwinScenario)
 }
 
 const contextCache = new Map<string, TwinContext>();
+/** The server keeps many contexts (tools re-run the same scenario across seeds); the page worker sets this to a couple, see setContextCacheLimit. */
+let contextCacheLimit = 40;
+
+/**
+ * Cap the context cache. Each entry holds a whole TwinContext (the layout
+ * with every location, the slotting, the demand model) keyed on the full
+ * scenario JSON, so a page whose user edits a field per run would otherwise
+ * retain 40 contexts it never hits again; the worker keeps two, enough for a
+ * seed re-run of the same scenario.
+ */
+export function setContextCacheLimit(n: number): void {
+  contextCacheLimit = Math.max(1, Math.floor(n));
+  while (contextCache.size > contextCacheLimit) contextCache.delete(contextCache.keys().next().value!);
+}
+
+/** Entries in the context cache (for tests). */
+export function contextCacheSize(): number {
+  return contextCache.size;
+}
 
 /** Build the context. Async only because a candystore scenario is fetched live. */
 export async function buildTwin(dc: string, startWeek: number, scenario: TwinScenario = {}): Promise<TwinContext> {
@@ -300,8 +319,8 @@ export async function buildTwin(dc: string, startWeek: number, scenario: TwinSce
   const workloadContext: WorkloadContext = { site, layout, model, catalog, std, slotting: slotEval, faces, startWeek };
 
   const ctx: TwinContext = { site, layout, catalog, network, model, std, costs, workers, slottingPolicy, slotting, slotEval, faces, frequencies, startWeek, policy, supplierDelays, workloadContext, scheduleOptions, scenario, changes };
-  if (contextCache.size > 40) contextCache.delete(contextCache.keys().next().value!);
   contextCache.set(key, ctx);
+  while (contextCache.size > contextCacheLimit) contextCache.delete(contextCache.keys().next().value!);
   return ctx;
 }
 

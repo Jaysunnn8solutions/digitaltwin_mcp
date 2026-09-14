@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type MouseEvent } from "react";
+import { useMemo, type KeyboardEvent, type MouseEvent } from "react";
 import { floorSvg, floorTransform } from "@/lib/render/floor";
 import type { Playback, WorldPayload } from "@/lib/trace/types";
 import type { PickResult } from "@/lib/three/api";
@@ -57,10 +57,17 @@ export default function Minimap({ world, playback, t, selection, onLookAt, onSel
       onLookAt(x, y);
     }
   };
+  // The keyboard cannot point at a spot on the plan; Enter or Space looks at the building's centre, the orbit preset's own target.
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    const [x, y] = tf.toFeet(tf.width / 2, tf.height / 2);
+    onLookAt(x, y);
+  };
 
   return (
     <div className="twin-overlay twin-minimap" title="Click to look there; click a dot to select it">
-      <div className="wrap" onClick={onClick}>
+      <div className="wrap" role="button" tabIndex={0} aria-label="Floor plan: click to look there, click a dot to select it; Enter looks at the centre of the building" onClick={onClick} onKeyDown={onKeyDown}>
         <div dangerouslySetInnerHTML={{ __html: svg }} />
         <svg className="dots" viewBox={`0 0 ${tf.width} ${tf.height}`} aria-hidden="true">
           {dots.map((d) => {

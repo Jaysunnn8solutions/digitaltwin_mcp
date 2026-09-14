@@ -17,7 +17,9 @@ export interface Acquired {
  * A pool of n identical units. acquire(prefer) hands back the preferred unit
  * when it is free, else the lowest free one, else an overflow index n + k so
  * playback never blocks: the engine's counters are the truth and the
- * free-list only names what the counters already granted.
+ * free-list only names what the counters already granted. `skip` names units
+ * that are out of service for the caller (a door outage): they are neither
+ * preferred nor picked, though they may still be released.
  */
 export class FreeList {
   private readonly held: Set<number> = new Set();
@@ -33,13 +35,13 @@ export class FreeList {
     return i < this.n ? !this.held.has(i) : !this.overflowHeld.has(i);
   }
 
-  acquire(prefer?: number): Acquired {
-    if (prefer !== undefined && prefer >= 0 && prefer < this.n && !this.held.has(prefer)) {
+  acquire(prefer?: number, skip?: (i: number) => boolean): Acquired {
+    if (prefer !== undefined && prefer >= 0 && prefer < this.n && !this.held.has(prefer) && !skip?.(prefer)) {
       this.held.add(prefer);
       return { index: prefer, overflow: false };
     }
     for (let i = 0; i < this.n; i++) {
-      if (!this.held.has(i)) {
+      if (!this.held.has(i) && !skip?.(i)) {
         this.held.add(i);
         return { index: i, overflow: false };
       }

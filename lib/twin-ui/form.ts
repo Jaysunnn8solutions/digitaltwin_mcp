@@ -14,7 +14,7 @@
  */
 
 import type { z } from "zod";
-import { compactSpec, type LayoutSpec } from "../layout/spec";
+import { compactSpec, layoutSpecSchema, type LayoutSpec } from "../layout/spec";
 import { extensionShape } from "../twin/scenario-ext";
 import { scenarioSchema, scenarioShape, type TwinScenario } from "../twin/twin";
 import type { LaborStandards, PickZone } from "../twin/types";
@@ -261,6 +261,9 @@ export function scenarioToForm(s: TwinScenario): ScenarioForm {
 
 type Raw = Record<string, unknown>;
 
+/** A signed decimal number: digits with an optional fraction, nothing else. */
+const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)$/;
+
 /**
  * Builds the raw object the schema will parse. Text that should be a number
  * but is not one becomes an error here (zod would only say "expected number,
@@ -272,7 +275,8 @@ function build(form: ScenarioForm, errors: FormErrors): Raw {
   const numAt = (path: string, text: string): number | undefined => {
     const s = text.trim();
     if (s === "") return undefined;
-    const n = Number(s);
+    // Plain decimals only: Number() would also take "0x10" and "1e1", which a field that says '"1,5" is not a number' should not.
+    const n = DECIMAL.test(s) ? Number(s) : NaN;
     if (!Number.isFinite(n)) {
       errors[path] = `"${s}" is not a number.`;
       return undefined;
@@ -473,19 +477,33 @@ export interface ImportRackEdits {
 
 export const EMPTY_IMPORT_EDITS: ImportRackEdits = { levels: "", slotsPerBay: "", aisleWidthFt: "" };
 
-function edited(text: string, integer: boolean): number | undefined {
+/**
+ * The ranges the edits are clamped into, read off layoutSpecSchema so they
+ * cannot drift from it: an out-of-range edit would otherwise fail the worker's
+ * parse once per rack run, with paths no form field shows.
+ */
+const rackShape = layoutSpecSchema.shape.racks.element.shape;
+const range = (s: { minValue: number | null; maxValue: number | null }): [number, number] => [s.minValue ?? 1, s.maxValue ?? Infinity];
+export const IMPORT_EDIT_RANGES: Record<keyof ImportRackEdits, [min: number, max: number]> = {
+  levels: range(rackShape.levels),
+  slotsPerBay: range(rackShape.slotsPerBay),
+  aisleWidthFt: range(layoutSpecSchema.shape.aisleWidthFt),
+};
+
+function edited(text: string, key: keyof ImportRackEdits, integer: boolean): number | undefined {
   const s = text.trim();
   if (s === "") return undefined;
   const n = Number(s);
   if (!Number.isFinite(n) || n <= 0) return undefined;
-  return integer ? Math.round(n) : n;
+  const [min, max] = IMPORT_EDIT_RANGES[key];
+  return Math.min(max, Math.max(min, integer ? Math.round(n) : n));
 }
 
-/** The spec with the edits applied to every rack run (levels, slots per bay) and the single-sided aisle width, compacted. */
+/** The spec with the edits applied to every rack run (levels, slots per bay) and the single-sided aisle width, clamped to the schema's ranges and compacted. */
 export function applyImportEdits(spec: LayoutSpec, edits: ImportRackEdits): LayoutSpec {
-  const levels = edited(edits.levels, true);
-  const slots = edited(edits.slotsPerBay, true);
-  const aisle = edited(edits.aisleWidthFt, false);
+  const levels = edited(edits.levels, "levels", true);
+  const slots = edited(edits.slotsPerBay, "slotsPerBay", true);
+  const aisle = edited(edits.aisleWidthFt, "aisleWidthFt", false);
   if (levels === undefined && slots === undefined && aisle === undefined) return spec;
   return compactSpec({
     ...spec,

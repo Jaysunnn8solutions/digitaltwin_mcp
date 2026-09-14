@@ -8,8 +8,9 @@ import { importLayout } from "../layout/import";
 import { sampleCsv } from "../layout/samples";
 import { buildLayout, siteToSpec, type Layout } from "../twin/layout";
 import { buildTwin } from "../twin/twin";
+import { TRUCK_LENGTH } from "../three/geometry";
 import { LANE_SLOTS, type WorkerInfo } from "./types";
-import { PICK_LEVEL_FT, RESERVE_LEVEL_FT, buildWorld, parkSpot } from "./world";
+import { PICK_LEVEL_FT, QUEUE_FIRST_FT, QUEUE_PITCH_FT, RESERVE_LEVEL_FT, ROAD_Y, YARD_TRUCK_LENGTH_FT, buildWorld, parkSpot } from "./world";
 import { workerInfos } from "./fixtures";
 
 async function layouts(): Promise<Array<{ name: string; layout: Layout; workers: WorkerInfo[] }>> {
@@ -100,6 +101,28 @@ describe("buildWorld", () => {
         expect(hs[0]).toBe(0);
         const pitch = r.use === "pick" ? PICK_LEVEL_FT : RESERVE_LEVEL_FT;
         for (let l = 1; l < hs.length; l++) expect(hs[l] - hs[l - 1]).toBeCloseTo(l === 1 && r.use === "mixed" ? PICK_LEVEL_FT : pitch, 9);
+      }
+    }
+  });
+
+  it("keeps the queue spots clear of the docked trailer, the road and each other", async () => {
+    // The yard's copy of the truck length is the renderer's.
+    expect(YARD_TRUCK_LENGTH_FT).toBe(TRUCK_LENGTH);
+    const clearance = 5;
+    // Spot 0's rear is beyond a docked trailer (0..TRUCK_LENGTH out) and beyond the road the undocking trucks drive along.
+    expect(QUEUE_FIRST_FT).toBeGreaterThanOrEqual(TRUCK_LENGTH + clearance);
+    expect(QUEUE_FIRST_FT).toBeGreaterThan(-ROAD_Y);
+    // Consecutive spots are a truck length plus clearance apart.
+    expect(QUEUE_PITCH_FT).toBeGreaterThanOrEqual(TRUCK_LENGTH + clearance);
+    for (const { layout, workers } of await layouts()) {
+      const w = buildWorld(layout, workers);
+      for (const f of w.frames) {
+        const spots = w.yard.queue[f.index];
+        if (!spots) continue;
+        spots.forEach((s, k) => {
+          const out = -((s[0] - f.origin[0]) * f.inward[0] + (s[1] - f.origin[1]) * f.inward[1]);
+          expect(out).toBeCloseTo(QUEUE_FIRST_FT + QUEUE_PITCH_FT * k, 6);
+        });
       }
     }
   });

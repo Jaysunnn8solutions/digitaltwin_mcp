@@ -16,7 +16,7 @@ import { fitJob, type FitResult } from "./fit";
 import { applyEvent, cloneState, createState, kpiContext, type KpiContext } from "./kpis";
 import { depotPath, dockToRackPath, exitPath, pathFeet, rackToRackPath, sShapePath, transferPath, visualOffset, yardPath, type Path } from "./paths";
 import { upperBound } from "./search";
-import { tickerLine } from "./ticker";
+import { tickerLine, type TickerNames } from "./ticker";
 import {
   ActorState,
   DirtyKind,
@@ -29,6 +29,7 @@ import {
   type Checkpoint,
   type CsrTimeline,
   type DirtyList,
+  type DoorFrame,
   type EntityDef,
   type Interval,
   type JobInfo,
@@ -38,6 +39,7 @@ import {
   type Pt,
   type RunningKpis,
   type SkuInfo,
+  type SupplierInfo,
   type TickerEvent,
   type TraceEvent,
   type TraceInit,
@@ -77,6 +79,8 @@ export interface CompileInput {
   skus: SkuInfo[];
   /** sku id → pick location id. */
   slotting: Array<[sku: string, loc: string]>;
+  /** Supplier names for the truck labels and ticker lines; an unknown or absent list falls back to the id. */
+  suppliers?: SupplierInfo[];
   opts?: CompileOptions;
 }
 
@@ -228,11 +232,33 @@ interface CsrRow {
   ev: number;
 }
 
-class CsrBuilder {
+/**
+ * Where a row at t goes in a per-item list whose t is non-decreasing: the
+ * index of the first row later than t. The builders below take rows in the
+ * order the events are processed, and a job start may write a change at a
+ * future minute (a load frees a lane spot at the pickup, a putaway lands a
+ * pallet at the drop), so a later event can carry an earlier t; every row is
+ * placed by time, never by call order, and apply.ts's binary searches stay
+ * sound. Exported for the tests.
+ */
+export function rowInsertIndex(rows: ReadonlyArray<{ t: number }>, t: number): number {
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (rows[mid].t <= t + EPS) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Exported for the tests: a per-item value timeline with rows in time order and no two neighbours alike. */
+export class CsrBuilder {
   readonly items: CsrRow[][];
   constructor(n: number, initial: (i: number) => number) {
     this.items = Array.from({ length: n }, (_, i) => [{ t: 0, v: initial(i), ev: -1 }]);
   }
+  /** The value in force after the last row (the latest time written so far). */
   get(i: number): number {
     const rows = this.items[i];
     return rows[rows.length - 1].v;
@@ -240,19 +266,22 @@ class CsrBuilder {
   set(i: number, t: number, v: number, ev: number): void {
     const rows = this.items[i];
     if (!rows) return;
-    const last = rows[rows.length - 1];
-    if (last.v === v) return;
-    if (Math.abs(last.t - t) <= EPS && rows.length > 1) {
-      last.v = v;
-      last.ev = ev;
-      return;
-    }
-    if (Math.abs(last.t - t) <= EPS && rows.length === 1) {
-      last.v = v;
-      last.ev = ev;
-      return;
-    }
-    rows.push({ t, v, ev });
+    const k = rowInsertIndex(rows, t);
+    const prev = rows[k - 1];
+    // A row at the same minute as its predecessor replaces it (the initial row included).
+    if (prev && Math.abs(prev.t - t) <= EPS) {
+      const before = rows[k - 2];
+      if (before && before.v === v) rows.splice(k - 1, 1);
+      else {
+        prev.v = v;
+        prev.ev = ev;
+      }
+    } else if (prev && prev.v === v) return;
+    else rows.splice(k, 0, { t, v, ev });
+    // The next row is now a change from v; drop it when it changes to v itself.
+    const at = rowInsertIndex(rows, t);
+    const next = rows[at];
+    if (next && next.v === v) rows.splice(at, 1);
   }
   build<V extends Uint8Array | Uint16Array | Int32Array | Uint32Array>(make: (n: number) => V, kind: DirtyKind, dirty: DirtyEntry[]): CsrTimeline<V> {
     const total = this.items.reduce((a, r) => a + r.length, 0);
@@ -291,7 +320,10 @@ interface PalletRow {
   ev: number;
 }
 
-class PalletBuilder {
+const samePlace = (a: PalletRow, at: PalletAt, ref: number, slot: number) => a.at === at && a.ref === ref && a.slot === slot;
+
+/** Exported for the tests: per-pallet placement rows, in time order like CsrBuilder's. */
+export class PalletBuilder {
   readonly items: PalletRow[][] = [];
   add(): number {
     this.items.push([{ t: 0, at: PalletAt.Unborn, ref: -1, slot: -1, ev: -1 }]);
@@ -300,16 +332,22 @@ class PalletBuilder {
   set(i: number, t: number, at: PalletAt, ref: number, slot: number, ev: number): void {
     const rows = this.items[i];
     if (!rows) return;
-    const last = rows[rows.length - 1];
-    if (last.at === at && last.ref === ref && last.slot === slot) return;
-    if (Math.abs(last.t - t) <= EPS) {
-      last.at = at;
-      last.ref = ref;
-      last.slot = slot;
-      last.ev = ev;
-      return;
-    }
-    rows.push({ t, at, ref, slot, ev });
+    const k = rowInsertIndex(rows, t);
+    const prev = rows[k - 1];
+    if (prev && Math.abs(prev.t - t) <= EPS) {
+      const before = rows[k - 2];
+      if (before && samePlace(before, at, ref, slot)) rows.splice(k - 1, 1);
+      else {
+        prev.at = at;
+        prev.ref = ref;
+        prev.slot = slot;
+        prev.ev = ev;
+      }
+    } else if (prev && samePlace(prev, at, ref, slot)) return;
+    else rows.splice(k, 0, { t, at, ref, slot, ev });
+    const atIdx = rowInsertIndex(rows, t);
+    const next = rows[atIdx];
+    if (next && samePlace(next, at, ref, slot)) rows.splice(atIdx, 1);
   }
   current(i: number): PalletRow {
     const rows = this.items[i];
@@ -637,6 +675,20 @@ export function compilePlayback(input: CompileInput): Playback {
   const stationsFree = new FreeList(world.stations.length);
   const laneSpots = world.frames.map(() => new FreeList(LANE_SLOTS));
   const stagingLanes = new FreeList(outFrames.length);
+  /**
+   * Doors the scenario has out of service today, as layout.doors indices. The
+   * engine only subtracts `count` from the doors available, so the playback
+   * takes the last `count` doors of that kind out: they show the outage
+   * colour and no truck is docked at them while the window lasts.
+   */
+  const outageDoors = new Set<number>();
+  const outageSkip = (frames: DoorFrame[]) => (i: number) => outageDoors.has(frames[i]?.index ?? -1);
+  const outDoorsOn = (kind: "inbound" | "outbound", day: number): number[] => {
+    const frames = kind === "inbound" ? inFrames : outFrames;
+    const windows = kind === "inbound" ? init.outages.inDoors : init.outages.outDoors;
+    const count = Math.min(frames.length, windows.filter((o) => day >= o.fromDay && day <= o.toDay).reduce((a, o) => a + o.count, 0));
+    return frames.slice(frames.length - count).map((f) => f.index);
+  };
 
   // --- Timelines ---
   const initFace = new Map(init.face);
@@ -649,6 +701,32 @@ export function compilePlayback(input: CompileInput): Playback {
   const doors = new CsrBuilder(layout.doors.length, () => -1);
   const laneSlots = new CsrBuilder(layout.doors.length * LANE_SLOTS, () => -1);
   const stations = new CsrBuilder(world.stations.length, () => -1);
+  /**
+   * Pallets standing on each lane spot, newest last. A lane spot holds one
+   * pallet until the lane is full; past LANE_SLOTS the free-list hands out
+   * overflow indices and the pallet timeline keeps them raw (apply.ts stacks
+   * tier floor(slot / LANE_SLOTS) on spot slot % LANE_SLOTS), so the spot's
+   * CSR item names whichever pallet arrived last and stays occupied until the
+   * last one leaves, instead of forgetting the ground pallet when a tier
+   * arrives or clearing the spot when it goes.
+   */
+  const laneStacks = new Map<number, number[]>();
+  const laneArrive = (door: number, rawSlot: number, pallet: number, t: number, ev: number) => {
+    const item = door * LANE_SLOTS + (rawSlot % LANE_SLOTS);
+    const stack = laneStacks.get(item) ?? [];
+    stack.push(pallet);
+    laneStacks.set(item, stack);
+    laneSlots.set(item, t, pallet, ev);
+  };
+  const laneLeave = (door: number, rawSlot: number, pallet: number, t: number, ev: number) => {
+    const item = door * LANE_SLOTS + (rawSlot % LANE_SLOTS);
+    const stack = laneStacks.get(item) ?? [];
+    const k = stack.indexOf(pallet);
+    if (k >= 0) stack.splice(k, 1);
+    laneSlots.set(item, t, stack.length ? stack[stack.length - 1] : -1, ev);
+  };
+  /** A door's idle value: -2 while the scenario has it out, else -1. */
+  const doorIdle = (idx: number): number => (outageDoors.has(idx) ? -2 : -1);
   const homes: Array<[number, number]> = [];
   for (const [sku, loc] of init.reserveLoc) {
     const s = skuIdx.get(sku);
@@ -759,7 +837,21 @@ export function compilePlayback(input: CompileInput): Playback {
   };
   const samples = { dockToStock: [] as number[], doorWaits: [] as number[], cycleMin: [] as number[] };
   const ticker: TickerEvent[] = [];
-  const tickerNames = { sku: (id: string) => skuById.get(id)?.name ?? id };
+  const supplierName = new Map((input.suppliers ?? []).map((s) => [s.id, s.name]));
+  const poSupplier = new Map<string, string>();
+  const tickerNames: TickerNames = {
+    sku: (id) => skuById.get(id)?.name ?? id,
+    supplier: (id) => supplierName.get(id) ?? id,
+    po: (po) => {
+      const s = poSupplier.get(po);
+      return s === undefined ? po : (supplierName.get(s) ?? s);
+    },
+    order: (id) => orders.get(id)?.storeName || id,
+  };
+  // One "wms down" line per outage: overlapping windows make the engine note a
+  // second `down` while still down (tracer-only state, not a number), and the
+  // ticker would otherwise read down, down, up.
+  let wmsDown = false;
   const quiet: Array<[number, number]> = [];
   let onFloor = 0;
   let quietStart = 0;
@@ -988,7 +1080,7 @@ export function compilePlayback(input: CompileInput): Playback {
         dropRef = far ? (reserveIndex.get(far.id) ?? -1) : -1;
         if (rec) {
           laneSpots[rec.door].release(rec.slot);
-          laneSlots.set(rec.door * LANE_SLOTS + (rec.slot % LANE_SLOTS), t, -1, ev);
+          laneLeave(rec.door, rec.slot, pallet, t, ev);
           palletSpot.delete(pallet);
         }
         setPallet(pallet, t, PalletAt.Forklift, vehicle.entity, -1, ev);
@@ -1048,7 +1140,7 @@ export function compilePlayback(input: CompileInput): Playback {
         let doorIdx = o.door;
         if (e.outDoorAcquired || doorIdx < 0) {
           const preferList = o.lane >= 0 ? doorListIndex("outbound", o.lane) : undefined;
-          const got = outDoors.acquire(preferList !== undefined && preferList >= 0 ? preferList : undefined);
+          const got = outDoors.acquire(preferList !== undefined && preferList >= 0 ? preferList : undefined, outageSkip(outFrames));
           doorIdx = outFrames[got.index % Math.max(1, outFrames.length)]?.index ?? outFrames[0]?.index ?? 0;
           o.door = doorIdx;
         }
@@ -1078,7 +1170,12 @@ export function compilePlayback(input: CompileInput): Playback {
           stops.push({ i: dropVertex, minutes: std.loadPerPallet + (k === 0 ? std.loadPerTruck : 0) });
           const pal = orderPallet(o, info.order, k);
           legs.push({ pickupVertex, dropStop: stops.length - 1, pallet: pal, door: staged, slot });
-          if (o.lane >= 0) laneSpots[staged].release(slot);
+          // The spot is free for the next pack from the load's start (the free-list says so),
+          // so the spot timeline frees it now too; the pallet itself leaves at the pickup below.
+          if (o.lane >= 0) {
+            laneSpots[staged].release(slot);
+            laneLeave(staged, slot, pal, t, ev);
+          }
         }
         loadedLegs = legs;
         route = polyPath(pts, stops);
@@ -1175,7 +1272,6 @@ export function compilePlayback(input: CompileInput): Playback {
       for (const l of loadedLegs) {
         const pickupT = times.vertex[l.pickupVertex] ?? t;
         setPallet(l.pallet, pickupT, PalletAt.Jack, vehicle.entity, -1, ev);
-        laneSlots.set(l.door * LANE_SLOTS + (l.slot % LANE_SLOTS), pickupT, -1, ev);
         const dropT = times.stops[l.dropStop]?.arrive ?? times.end;
         setPallet(l.pallet, dropT, PalletAt.TrailerOut, truck?.entity ?? -1, -1, ev);
       }
@@ -1194,8 +1290,8 @@ export function compilePlayback(input: CompileInput): Playback {
     const info = run.row.info;
     if (info.kind === "unload" && run.pallet >= 0) {
       palletSpot.set(run.pallet, { door: run.laneDoor, slot: run.laneSlot });
-      setPallet(run.pallet, e.t, PalletAt.DockLane, run.laneDoor, run.laneSlot % LANE_SLOTS, ev);
-      laneSlots.set(run.laneDoor * LANE_SLOTS + (run.laneSlot % LANE_SLOTS), e.t, run.pallet, ev);
+      setPallet(run.pallet, e.t, PalletAt.DockLane, run.laneDoor, run.laneSlot, ev);
+      laneArrive(run.laneDoor, run.laneSlot, run.pallet, e.t, ev);
     }
     if (run.station >= 0) {
       stationsFree.release(run.station);
@@ -1215,14 +1311,35 @@ export function compilePlayback(input: CompileInput): Playback {
     applyEvent(state, e, kctx);
     let tickerEntity = -1;
     let tickerPos: Pt | undefined;
+    let skipLine = false;
     switch (e.k) {
       case "init":
         break;
+      case "day": {
+        // Today's outage set: doors newly out show -2 once free, doors back in service go -1 again.
+        const today = new Set([...outDoorsOn("inbound", e.day), ...outDoorsOn("outbound", e.day)]);
+        for (const idx of [...outageDoors]) {
+          if (today.has(idx)) continue;
+          outageDoors.delete(idx);
+          if (doors.get(idx) === -2) doors.set(idx, e.t, -1, ev);
+        }
+        for (const idx of today) {
+          if (outageDoors.has(idx)) continue;
+          outageDoors.add(idx);
+          if (doors.get(idx) === -1) doors.set(idx, e.t, -2, ev);
+        }
+        break;
+      }
+      case "poPlaced":
+        poSupplier.set(e.po, e.supplier);
+        break;
       case "truckScheduled":
         etas.set(e.po, e.eta);
+        poSupplier.set(e.po, e.supplier);
         break;
       case "truckArrive": {
-        const entity = addEntity({ kind: "truckIn", id: e.po, label: `${e.supplier} truck`, colorIdx: 0, meta: { po: e.po, supplier: e.supplier, importer: e.importer, pallets: e.pallets.length, day: e.day } }, true);
+        poSupplier.set(e.po, e.supplier);
+        const entity = addEntity({ kind: "truckIn", id: e.po, label: `${tickerNames.supplier(e.supplier)} truck`, colorIdx: 0, meta: { po: e.po, supplier: e.supplier, importer: e.importer, pallets: e.pallets.length, day: e.day } }, true);
         const cat = (sku: string) => categories.indexOf(skuById.get(sku)?.category ?? "");
         const palletEntities = e.pallets.map((p, i) =>
           addPallet({
@@ -1244,7 +1361,7 @@ export function compilePlayback(input: CompileInput): Playback {
         const truck = trucksIn.get(e.po);
         if (!truck) break;
         const preferList = e.engineDoor ? inFrames.findIndex((f) => f.door === e.engineDoor) : -1;
-        const got = inDoors.acquire(preferList >= 0 ? preferList : undefined);
+        const got = inDoors.acquire(preferList >= 0 ? preferList : undefined, outageSkip(inFrames));
         const door = inFrames[got.index % Math.max(1, inFrames.length)]?.index ?? 0;
         truck.door = door;
         truck.docked = true;
@@ -1265,7 +1382,7 @@ export function compilePlayback(input: CompileInput): Playback {
         truck.undocked = true;
         const li = doorListIndex("inbound", truck.door);
         if (li >= 0) inDoors.release(li);
-        doors.set(truck.door, e.t, -1, ev);
+        doors.set(truck.door, e.t, doorIdle(truck.door), ev);
         layoutExit(truck.tb, truck.door, e.t + UNDOCK_LINGER_MIN, true);
         tickerEntity = truck.entity;
         break;
@@ -1353,8 +1470,8 @@ export function compilePlayback(input: CompileInput): Playback {
         }
         while (o.slots.length <= e.index) o.slots.push(laneSpots[o.lane].acquire().index);
         const slot = o.slots[e.index];
-        setPallet(pal, e.t, PalletAt.StagingLane, o.lane, slot % LANE_SLOTS, ev);
-        laneSlots.set(o.lane * LANE_SLOTS + (slot % LANE_SLOTS), e.t, pal, ev);
+        setPallet(pal, e.t, PalletAt.StagingLane, o.lane, slot, ev);
+        laneArrive(o.lane, slot, pal, e.t, ev);
         break;
       }
       case "truckLoaded": {
@@ -1381,7 +1498,7 @@ export function compilePlayback(input: CompileInput): Playback {
         layoutExit(truck.tb, truck.door, e.t, true);
         const li = doorListIndex("outbound", truck.door);
         if (li >= 0) outDoors.release(li);
-        doors.set(truck.door, e.t, -1, ev);
+        doors.set(truck.door, e.t, doorIdle(truck.door), ev);
         if (o && o.laneList >= 0) stagingLanes.release(o.laneList);
         for (const p of o?.pallets ?? []) setPallet(p, e.t, PalletAt.Gone, -1, -1, ev);
         tickerEntity = truck.entity;
@@ -1465,12 +1582,16 @@ export function compilePlayback(input: CompileInput): Playback {
         }
         break;
       }
+      case "wms":
+        if (e.down === wmsDown) skipLine = true;
+        wmsDown = e.down;
+        break;
       case "end":
         break;
       default:
         break;
     }
-    const line = tickerLine(e, tickerNames);
+    const line = skipLine ? null : tickerLine(e, tickerNames);
     if (line) ticker.push({ t: e.t, kind: e.k, text: line.text, severity: line.severity, entity: tickerEntity, ev, x: tickerPos?.[0], y: tickerPos?.[1] });
   }
   fillBins(Infinity);

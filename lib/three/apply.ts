@@ -22,7 +22,7 @@
 
 import { Color, Vector3 } from "three";
 import { ActorState, DirtyKind, PalletAt, SegKind, type Playback, type TraceInit, type WorldPayload } from "../trace/types";
-import { PROCESS_SKILL, PROCESSES } from "../twin/types";
+import { PROCESSES } from "../twin/types";
 import { ActorPool, EQUIPMENT_COLORS, LoosePallets, type Actor } from "./actors";
 import type { Building } from "./building";
 import { PALLET_HEIGHT } from "./geometry";
@@ -579,8 +579,57 @@ function applyActor(scene: TwinScene, actor: Actor, i: number, sample: FrameSamp
 
   if (actor.kind === "worker" || actor.kind === "truck") {
     const z = actor.kind === "truck" ? 14 : 6.5;
-    scene.labels.push({ entity: actor.entity, text: def.label, x: actor.group.position.x, y: -actor.group.position.z, z, priority: actor.kind === "truck" ? 2 : 1 });
+    // A worker's pill is hidden by the walls from a low camera outside; a truck stands at the wall and keeps its label.
+    scene.labels.push({ entity: actor.entity, text: def.label, x: actor.group.position.x, y: -actor.group.position.z, z, priority: actor.kind === "truck" ? 2 : 1, occludable: actor.kind === "worker" });
   }
+}
+
+const anchorCache = new WeakMap<WorldPayload, Array<[number, number] | null>>();
+
+/**
+ * Where each process's queue chip hangs, PROCESSES order: at the place the
+ * work waits, not at the skill's idle home (four inbound chips would
+ * otherwise stack over the IN-1 corner while the replenishments happen 150 ft
+ * away in the reserve). unload at the first inbound door's lane mouth,
+ * receive 10 ft inside it, putaway at the forklift park, replenish on the
+ * reserve front corridor at the reserve's centre, pick at the depot, pack at
+ * the middle station, load at the first outbound door. Chips that share an
+ * anchor (an import with one door) still stack, see labels.ts. Exported for
+ * the tests; cached per world since the reserve centre is a mean over every
+ * position.
+ */
+export function queueAnchors(world: WorldPayload): Array<[number, number] | null> {
+  const hit = anchorCache.get(world);
+  if (hit) return hit;
+  const w = world.world;
+  const layout = world.layout;
+  const inFrame = w.frames.find((f) => f.kind === "inbound");
+  const outFrame = w.frames.find((f) => f.kind === "outbound");
+  const along = (f: typeof inFrame, ft: number): [number, number] | null => (f ? [f.origin[0] + f.inward[0] * ft, f.origin[1] + f.inward[1] * ft] : null);
+  let reserveX = 0;
+  for (const l of layout.reserve) reserveX += l.x;
+  const reserveCentre: [number, number] | null = layout.reserve.length ? [reserveX / layout.reserve.length, w.corridors.reserveFront] : null;
+  const fallback = (skill: keyof typeof w.homes): [number, number] | null => w.homes[skill] ?? null;
+  const out: Array<[number, number] | null> = PROCESSES.map((proc) => {
+    switch (proc) {
+      case "unload":
+        return along(inFrame, 5) ?? fallback("receive");
+      case "receive":
+        return along(inFrame, 15) ?? fallback("receive");
+      case "putaway":
+        return w.parks.forklifts[0] ?? fallback("forklift");
+      case "replenish":
+        return reserveCentre ?? fallback("forklift");
+      case "pick":
+        return fallback("pick");
+      case "pack":
+        return w.stations[Math.floor(w.stations.length / 2)] ?? fallback("pack");
+      case "load":
+        return along(outFrame, 5) ?? fallback("load");
+    }
+  });
+  anchorCache.set(world, out);
+  return out;
 }
 
 function queueAt(scene: TwinScene, t: number): void {
@@ -625,14 +674,14 @@ export function applyFrame(scene: TwinScene, sample: FrameSample, playback: Play
   pulseHot(scene, t);
 
   queueAt(scene, t);
-  const homes = scene.world.world.homes;
+  const anchors = queueAnchors(scene.world);
   PROCESSES.forEach((proc, p) => {
     const n = scene.queue[p];
     if (n <= 0) return;
-    const home = homes[PROCESS_SKILL[proc]];
-    if (!home) return;
+    const at = anchors[p];
+    if (!at) return;
     // Chips float well above the workers' name pills, so a queue at the depot never covers the people in it.
-    scene.labels.push({ entity: queueChipEntity(p), text: `${proc} ${n}`, x: home[0], y: home[1], z: 13, priority: 3 });
+    scene.labels.push({ entity: queueChipEntity(p), text: `${proc} ${n}`, x: at[0], y: at[1], z: 13, priority: 3 });
   });
   for (const i of scene.overflow) {
     scene.refs.racks.reserveWorld(i, _v);

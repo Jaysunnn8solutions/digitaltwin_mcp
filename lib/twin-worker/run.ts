@@ -74,10 +74,15 @@ function errorName(err: unknown): string {
   return "Error";
 }
 
+/** Issues named in the banner; one edit on an imported building can fail every rack run, and the page shows the rest per field. */
+export const BANNER_ISSUES = 5;
+
 function errorResponse(runId: string, err: unknown): TwinResponse {
   if (err instanceof ZodError) {
     const issues = err.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message }));
-    const message = `Invalid scenario: ${issues.map((i) => (i.path ? `${i.path}: ${i.message}` : i.message)).join("; ")}`;
+    const shown = issues.slice(0, BANNER_ISSUES).map((i) => (i.path ? `${i.path}: ${i.message}` : i.message));
+    const more = issues.length - shown.length;
+    const message = `Invalid scenario: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}`;
     return { type: "error", runId, name: "ZodError", message, issues };
   }
   return { type: "error", runId, name: errorName(err), message: err instanceof Error ? err.message : String(err) };
@@ -107,7 +112,7 @@ export async function runInWorker(req: TwinRequest, post: PostMessageFn): Promis
     post({ type: "progress", runId, phase: "compile", day: days, days });
     const world = buildWorld(ctx.layout, workerInfos(ctx.workers, ctx.costs));
     const payload = buildWorldPayload(ctx, world);
-    const playback = compilePlayback({ events: tracer.events, layout: ctx.layout, world, skus: payload.skus, slotting: payload.slotting, opts: { keepEvents } });
+    const playback = compilePlayback({ events: tracer.events, layout: ctx.layout, world, skus: payload.skus, slotting: payload.slotting, suppliers: payload.suppliers, opts: { keepEvents } });
     const t3 = performance.now();
     post({ type: "done", runId, result, kpis: kpis(result), playback, world: payload, ms: { context: t1 - t0, simulate: t2 - t1, compile: t3 - t2 } }, collectBuffers(playback));
   } catch (err) {

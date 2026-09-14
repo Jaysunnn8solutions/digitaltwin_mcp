@@ -2,6 +2,7 @@
 
 import type { Kpis } from "@/lib/twin/replicate";
 import { deltaClass, deltaText, KPI_META } from "@/lib/twin-ui/format";
+import { keepFocus } from "./focus";
 
 export interface CompareRun {
   label: string;
@@ -33,9 +34,11 @@ export default function ComparePanel({ a, b, onSwap }: Props) {
           {b.changes.length > 0 && <span className="sub"> · {b.changes.join("; ")}</span>}
         </div>
         <div className="row" style={{ marginTop: 2 }}>
-          <button type="button" onClick={onSwap}>
-            Swap: play A
-          </button>
+          <span onMouseDown={keepFocus}>
+            <button type="button" onClick={onSwap}>
+              Swap: play A
+            </button>
+          </span>
           <span className="sub">The timeline draws B&apos;s queue and late strips over A&apos;s.</span>
         </div>
       </div>

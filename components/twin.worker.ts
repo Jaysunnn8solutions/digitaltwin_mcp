@@ -13,9 +13,14 @@
 import { installBundledData } from "../lib/data/bundle";
 import { dcIds } from "../lib/data/store";
 import type { TwinRequest, TwinResponse } from "../lib/trace/types";
+import { setContextCacheLimit } from "../lib/twin/twin";
 import { runInWorker } from "../lib/twin-worker/run";
 
 installBundledData();
+// Two contexts: a seed re-run of the same scenario stays instant, and a user
+// editing a field per run does not accumulate a context (with its layout and
+// demand model) for every run of the session.
+setContextCacheLimit(2);
 
 const post = (m: TwinResponse, transfer?: ArrayBuffer[]) => (self as unknown as Worker).postMessage(m, transfer ?? []);
 

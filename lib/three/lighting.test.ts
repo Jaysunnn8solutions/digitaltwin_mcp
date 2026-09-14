@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { Color } from "three";
 import { ActorState, type EntityDef, type Track } from "../trace/types";
-import { createLighting, FLOOR_LIGHT_TARGET, lightLevels, scheduleFromPlayback, skyAt, STRIPS_AFTER_LAST_OUT_MIN, STRIPS_MIN, STRIPS_OFF_DEFAULT_MIN, STRIPS_ON_MIN, stripsOn } from "./lighting";
+import { createLighting, FLOOR_LIGHT_TARGET, LIGHT_SCALE, lightLevels, scheduleFromPlayback, skyAt, STRIPS_AFTER_LAST_OUT_MIN, STRIPS_MIN, STRIPS_OFF_DEFAULT_MIN, STRIPS_ON_MIN, stripsOn } from "./lighting";
 import { THEMES } from "./palette";
 
 function track(entity: number, keys: Array<[t: number, s: number]>): Track {
@@ -132,25 +132,29 @@ describe("skyAt", () => {
 });
 
 describe("createLighting", () => {
-  it("drives the sun, sky and interior lights from the clock and frees them", () => {
+  it("drives the sun, sky and interior lights from the clock, in three's π-scaled units, and frees them", () => {
     const L = createLighting("light");
     L.fit(300, 200);
     const noon = L.setTime(null, true);
     expect(noon.night).toBe(false);
     expect(noon.strips).toBe(true);
     expect(L.sun.visible).toBe(true);
-    expect(L.sun.intensity).toBeCloseTo(noon.sun, 6);
-    expect(L.sun.intensity).toBeGreaterThan(0.45);
-    expect(L.interior.intensity).toBeCloseTo(noon.interior, 6);
+    expect(LIGHT_SCALE).toBeCloseTo(Math.PI, 12);
+    expect(L.sun.intensity).toBeCloseTo(noon.sun * LIGHT_SCALE, 6);
+    expect(L.sun.intensity).toBeGreaterThan(0.45 * LIGHT_SCALE);
+    expect(L.interior.intensity).toBeCloseTo(noon.interior * LIGHT_SCALE, 6);
     const dayHemi = L.hemi.intensity;
+    // At shift start the strips fill in exactly: sun, sky and strips put FLOOR_LIGHT_TARGET × π on the floor, i.e. full albedo after Lambert's 1/π.
+    const dawn = L.setTime(6 * 60 + 30, true);
+    expect((L.interior.intensity + L.hemi.intensity * 0.85 + L.sun.intensity * dawn.dir[1]) / LIGHT_SCALE).toBeCloseTo(FLOOR_LIGHT_TARGET, 6);
     const night = L.setTime(23 * 60, false);
     expect(night.night).toBe(true);
     expect(L.sun.visible).toBe(false);
     expect(L.hemi.intensity).toBeLessThan(dayHemi);
-    expect(L.interior.intensity).toBeCloseTo(0.18, 6);
+    expect(L.interior.intensity).toBeCloseTo(0.18 * LIGHT_SCALE, 6);
     const lateShift = L.setTime(23 * 60, true);
-    expect(L.interior.intensity).toBeCloseTo(lateShift.interior, 6);
-    expect(L.interior.intensity).toBeGreaterThan(0.9);
+    expect(L.interior.intensity).toBeCloseTo(lateShift.interior * LIGHT_SCALE, 6);
+    expect(L.interior.intensity).toBeGreaterThan(0.9 * LIGHT_SCALE);
     L.setTheme("dark");
     L.setTime(null, true);
     expect(L.hemi.intensity).toBeLessThan(dayHemi);

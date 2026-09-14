@@ -65,6 +65,12 @@ export async function fetchSampleFiles(names: string[]): Promise<Array<{ name: s
   );
 }
 
+/** The message for a compact spec whose JSON is over the twin's limit (lib/twin/twin.ts refuses it), or null when it fits. */
+export function specOverLimit(spec: LayoutSpec): string | null {
+  const bytes = JSON.stringify(spec).length;
+  return bytes > LIMITS.specJson ? `The layout is ${formatBytes(bytes)}, over the ${formatBytes(LIMITS.specJson)} limit; re-import with fewer walls and zones (they are drawing-only), or split the building.` : null;
+}
+
 function browserLimit(name: string): number {
   const n = name.toLowerCase();
   if (n.endsWith(".csv") || n.endsWith(".txt")) return LIMITS.browser.csv;
@@ -126,7 +132,13 @@ export default function BuildingPicker({ dc, dcs, value, disabled, onDc, onChang
       const result = await importSpecInWorker(files);
       if (!alive.current) return;
       if (!result.stats) onChange({ kind: "drop", spec: null, name: result.spec.name, error: result.buildError ?? "The drawing has no racks the twin can simulate." });
-      else onChange({ kind: "drop", spec: compactSpec(result.spec), name: result.spec.name, error: null });
+      else {
+        const spec = compactSpec(result.spec);
+        // The worker's buildTwin refuses a spec over the limit; saying so here keeps the failure at the picker, not at Run.
+        const over = specOverLimit(spec);
+        if (over) onChange({ kind: "drop", spec: null, name: result.spec.name, error: over });
+        else onChange({ kind: "drop", spec, name: result.spec.name, error: null });
+      }
     } catch (err) {
       if (alive.current) onChange({ kind: "drop", spec: null, name: "", error: err instanceof Error ? err.message : String(err) });
     } finally {

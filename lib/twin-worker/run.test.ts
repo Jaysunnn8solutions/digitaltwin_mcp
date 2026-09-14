@@ -13,9 +13,9 @@ import type { RunSpec, TraceInit, TwinRequest, TwinResponse } from "../trace/typ
 import { buildWorld } from "../trace/world";
 import { runOperations } from "../twin/operations";
 import { kpis } from "../twin/replicate";
-import { buildTwin, operationsOptions, type TwinScenario } from "../twin/twin";
+import { buildTwin, contextCacheSize, operationsOptions, setContextCacheLimit, type TwinScenario } from "../twin/twin";
 import { buildWorldPayload, workerInfos } from "./payload";
-import { CANDYSTORE_UNSUPPORTED, PAGE_MAX_DAYS, runInWorker } from "./run";
+import { BANNER_ISSUES, CANDYSTORE_UNSUPPORTED, PAGE_MAX_DAYS, runInWorker } from "./run";
 
 type Msg<T extends TwinResponse["type"]> = Extract<TwinResponse, { type: T }>;
 
@@ -163,6 +163,34 @@ describe("runInWorker", () => {
     expect(err.name).toBe("ZodError");
     expect(err.issues?.map((i) => i.path).sort()).toEqual(["", "demandScale"]);
     expect(err.message).toContain("demandScale");
+  });
+
+  it("caps the ZodError banner at a few issues and counts the rest", async () => {
+    const csv = await importLayout({ fileName: "locations.csv", text: sampleCsv() }, {}, "inline");
+    const layout = { ...csv.spec, racks: csv.spec.racks.map((r) => ({ ...r, levels: 13 })) };
+    const p = await send(runRequest({ scenario: { layout } as unknown as TwinScenario }));
+    const err = last(p, "error");
+    expect(err.name).toBe("ZodError");
+    expect(err.issues!.length).toBe(csv.spec.racks.length);
+    expect(err.issues!.length).toBeGreaterThan(BANNER_ISSUES);
+    expect(err.message).toContain(`; and ${csv.spec.racks.length - BANNER_ISSUES} more`);
+    expect(err.message.split("; ").length).toBe(BANNER_ISSUES + 1);
+  });
+
+  it("keeps no more contexts than the cache limit the worker sets", async () => {
+    setContextCacheLimit(2);
+    try {
+      for (const forklifts of [2, 3, 4, 5]) await buildTwin("dc-west", 36, { forklifts });
+      expect(contextCacheSize()).toBe(2);
+      // The two newest are the ones kept: a re-run of the last scenario is a hit, an older one is rebuilt (and evicts the oldest).
+      const hit = await buildTwin("dc-west", 36, { forklifts: 5 });
+      expect(await buildTwin("dc-west", 36, { forklifts: 5 })).toBe(hit);
+      expect(contextCacheSize()).toBe(2);
+      setContextCacheLimit(1);
+      expect(contextCacheSize()).toBe(1);
+    } finally {
+      setContextCacheLimit(40);
+    }
   });
 
   it("applies a run-time scenario field (inboundLatenessSdMin) like the tools do", async () => {

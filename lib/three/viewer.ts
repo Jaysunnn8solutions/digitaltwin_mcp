@@ -23,12 +23,12 @@ import { PROCESS_SKILL } from "../twin/types";
 import { ActorPool, LoosePallets, MaterialCache } from "./actors";
 import { DEFAULT_VIEWER_OPTIONS, type CameraMode, type CameraPreset, type LabelPos, type PickResult, type TwinViewer, type ViewerOptions, type ViewerStats } from "./api";
 import { applyFrame, bindScene, PlaybackSampler, recolorFaces, releaseScene, type TwinScene } from "./apply";
-import { buildBuilding, type Building } from "./building";
+import { buildBuilding, DOOR_HEIGHT, WALL_HEIGHT, type Building } from "./building";
 import { CameraRig, type FollowPose } from "./cameras";
 import { rackColliders, trailerCollider, wallColliders, type Aabb } from "./collide";
 import { buildEnvironment, type Environment } from "./environment";
 import { ResourceTracker, ringGeometry } from "./geometry";
-import { LabelProjector } from "./labels";
+import { LabelProjector, MAX_LABELS, type LabelOccluder } from "./labels";
 import { createLighting, scheduleFromPlayback, stripsOn, type Lighting, type LightSchedule } from "./lighting";
 import { STATE_COLORS, THEMES } from "./palette";
 import { Picker } from "./picking";
@@ -61,6 +61,7 @@ export class TwinViewerImpl implements TwinViewer {
   private readonly lighting: Lighting;
   private readonly picker = new Picker();
   private readonly projector = new LabelProjector();
+  private occluder: LabelOccluder | null = null;
   private renderer: WebGLRenderer | null = null;
   private world: WorldPayload | null = null;
   private objects: WorldObjects | null = null;
@@ -136,6 +137,8 @@ export class TwinViewerImpl implements TwinViewer {
     this.world = world;
     const { layout, spec } = world;
     const w = world.world;
+    // What hides a worker's pill from a camera outside: the walls, less the door openings.
+    this.occluder = { w: w.bbox.w, d: w.bbox.d, wallHeight: WALL_HEIGHT, doorHeight: DOOR_HEIGHT, doors: w.frames.map((f) => ({ x: f.origin[0], y: f.origin[1], tx: f.tangent[0], ty: f.tangent[1], halfWidth: f.widthFt / 2 })) };
     const quality = this.effectiveQuality(layout.pick.length + layout.reserve.length);
     const tracker = new ResourceTracker();
     const materials = new MaterialCache(tracker);
@@ -292,7 +295,7 @@ export class TwinViewerImpl implements TwinViewer {
     this.updateSelection();
     o?.env.follow(this.rig.camera);
     if (this.renderer) this.renderer.render(this.scene, this.rig.camera);
-    this.labelPos = this.options.labels && this.twin && this.size.width > 0 ? this.projector.project(this.twin.labels, this.rig.camera, this.size.width, this.size.height) : [];
+    this.labelPos = this.options.labels && this.twin && this.size.width > 0 ? this.projector.project(this.twin.labels, this.rig.camera, this.size.width, this.size.height, MAX_LABELS, this.occluder) : [];
     this.frameMs = typeof performance !== "undefined" ? performance.now() - t0 : 0;
   }
 
@@ -423,6 +426,7 @@ export class TwinViewerImpl implements TwinViewer {
     this.disposeWorld();
     this.playback = null;
     this.world = null;
+    this.occluder = null;
     this.schedule = null;
     this.lighting.dispose();
     this.scene.clear();

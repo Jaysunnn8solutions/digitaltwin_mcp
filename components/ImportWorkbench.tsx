@@ -163,8 +163,14 @@ export default function ImportWorkbench() {
   const openIn3d = () => {
     if (!result) return;
     setOpenError(null);
+    const compact = JSON.stringify(compactSpec(result.spec));
+    // The 3D page's worker refuses a spec over the limit after the user has already left this page; say so here, where re-importing is possible.
+    if (compact.length > LIMITS.specJson) {
+      setOpenError(`The layout is ${formatBytes(compact.length)}, over the ${formatBytes(LIMITS.specJson)} limit for the 3D page; re-import with fewer walls and zones (they are drawing-only), or split the building.`);
+      return;
+    }
     try {
-      window.sessionStorage.setItem(TWIN_SESSION_KEY, JSON.stringify(compactSpec(result.spec)));
+      window.sessionStorage.setItem(TWIN_SESSION_KEY, compact);
     } catch {
       setOpenError("This browser would not store the layout for the 3D page (storage full or blocked). On the 3D page, choose “Drop a drawing” and drop the file again.");
       return;

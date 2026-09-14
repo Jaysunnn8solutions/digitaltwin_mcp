@@ -8,7 +8,7 @@ import { deflateSync, strToU8 } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { TwinScenario } from "../twin/twin";
 import { SITE_URL, twinLink, twinUrl } from "../tools/shared";
-import { decodeHash, encodeHash, encodeScenario, HASH_DEFAULTS, HASH_MAX_DAYS, HASH_MAX_SCENARIO_BYTES, HashError } from "./hash";
+import { decodeHash, encodeHash, encodeScenario, HASH_DEFAULTS, HASH_MAX_DAYS, HASH_MAX_INFLATED_BYTES, HASH_MAX_SCENARIO_BYTES, HashError } from "./hash";
 
 const outages: TwinScenario = {
   demandScale: 1.3,
@@ -133,6 +133,25 @@ describe("encodeHash / decodeHash", () => {
     expect(decodeHash("#days=2&t=99999").t).toBe(2 * 1440);
     expect(decodeHash("#week=0.4&days=7.6").week).toBe(1);
     expect(decodeHash("#week=0.4&days=7.6").days).toBe(8);
+  });
+
+  it("refuses a deflate bomb before inflating it", () => {
+    // 4 MB of zeros deflate to a few KB: inside the link cap, far over the inflated cap.
+    const zeros = new Uint8Array(4 * 1024 * 1024);
+    const small = Buffer.from(deflateSync(zeros, { level: 9 })).toString("base64url");
+    expect(small.length).toBeLessThan(HASH_MAX_SCENARIO_BYTES);
+    expect(zeros.length).toBeGreaterThan(HASH_MAX_INFLATED_BYTES);
+    const t0 = performance.now();
+    expect(decodeHash(`#dc=dc-west&s=${small}`)).toEqual({ ...HASH_DEFAULTS, dc: "dc-west", scenario: {}, layoutDropped: false });
+    expect(performance.now() - t0).toBeLessThan(500);
+    // A link longer than the encoder ever emits is dropped without being decoded at all.
+    const long = Buffer.from(deflateSync(new Uint8Array(64 * 1024 * 1024), { level: 9 })).toString("base64url");
+    expect(long.length).toBeGreaterThan(HASH_MAX_SCENARIO_BYTES);
+    const t1 = performance.now();
+    expect(decodeHash(`#s=${long}`).scenario).toEqual({});
+    expect(performance.now() - t1).toBeLessThan(200);
+    // A legitimate scenario still decodes.
+    expect(decodeHash(encodeHash({ dc: "dc-east", week: 36, days: 7, seed: 1, scenario: outages })).scenario).toEqual(outages);
   });
 
   it("accepts custom defaults", () => {

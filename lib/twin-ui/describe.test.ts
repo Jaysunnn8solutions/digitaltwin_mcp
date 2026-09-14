@@ -87,7 +87,7 @@ describe("describeSelection on the fixture", () => {
     const worker = pb.entities.findIndex((e) => e.kind === "worker" && e.id === tour.worker);
     const sections = describeSelection({ kind: "entity", entity: worker }, pb, world, tour.startAt + tour.dur / 2);
     expect(sections.some((s) => s.title === `Job ${tour.id} · pick`)).toBe(true);
-    expect(engineRows(sections).some((r) => r.label === "Today" && r.value.includes("day"))).toBe(true);
+    expect(engineRows(sections).some((r) => r.label === "Today" && /^\S+ shift \d\d:\d\d–\d\d:\d\d as /.test(r.value))).toBe(true);
   });
 
   it("notes when the engine measured a putaway from one door but the playback drew it at another", async () => {

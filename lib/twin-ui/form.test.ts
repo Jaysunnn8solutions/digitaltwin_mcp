@@ -7,8 +7,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_STANDARDS } from "../twin/standards";
 import type { TwinScenario } from "../twin/twin";
-import { applyImportEdits, builtinPickFaces, checkFaces, emptyForm, extensionHelp, fieldHelp, formFieldCount, formToScenario, importPickFaces, issuesToErrors, scenarioToForm, STANDARD_KEYS } from "./form";
-import type { LayoutSpec } from "../layout/spec";
+import { applyImportEdits, builtinPickFaces, checkFaces, emptyForm, extensionHelp, fieldHelp, formFieldCount, formToScenario, IMPORT_EDIT_RANGES, importPickFaces, issuesToErrors, scenarioToForm, STANDARD_KEYS } from "./form";
+import { layoutSpecSchema, type LayoutSpec } from "../layout/spec";
 
 const full: TwinScenario = {
   demandScale: 1.3,
@@ -116,6 +116,17 @@ describe("ScenarioForm ↔ TwinScenario", () => {
     expect(Object.keys(r.errors).sort()).toEqual(["demandScale", "doorOutages.1.count", "doorOutages.1.kind", "inboundWindowEnd", "rackPick.levels", "standards.walkFtPerMin"]);
     expect(r.errors["standards.walkFtPerMin"]).toContain("not a number");
     expect(r.errors.inboundWindowEnd).toContain("both");
+    // Only plain decimals count as numbers: hex and exponent forms that Number() would take are errors here.
+    for (const odd of ["0x10", "1e1", "Infinity", "1,5"]) {
+      const g = emptyForm();
+      g.forklifts = odd;
+      expect(formToScenario(g).errors.forklifts, odd).toContain("not a number");
+    }
+    const dec = emptyForm();
+    dec.forklifts = " 3 ";
+    dec.demandScale = ".5";
+    dec.absenteeism = "+0.10";
+    expect(formToScenario(dec).scenario).toEqual({ forklifts: 3, demandScale: 0.5, absenteeism: 0.1 });
     // A valid form keeps the good fields.
     f.demandScale = "1.5";
     f.doorOutages.pop();
@@ -168,6 +179,17 @@ describe("ScenarioForm ↔ TwinScenario", () => {
     };
     expect(importPickFaces(spec)).toBe(25);
     expect(applyImportEdits(spec, { levels: "", slotsPerBay: "", aisleWidthFt: "" })).toBe(spec);
+    // Out-of-range edits are clamped into the schema's ranges instead of failing the worker's parse once per rack run.
+    expect(IMPORT_EDIT_RANGES).toEqual({ levels: [1, 12], slotsPerBay: [1, 10], aisleWidthFt: [3, 20] });
+    const clamped = applyImportEdits(spec, { levels: "13", slotsPerBay: "11", aisleWidthFt: "40" });
+    expect(clamped.racks.map((r) => [r.levels, r.slotsPerBay])).toEqual([
+      [12, 10],
+      [12, 10],
+      [12, 1],
+    ]);
+    expect(clamped.aisleWidthFt).toBe(20);
+    expect(applyImportEdits(spec, { levels: "0.4", slotsPerBay: "", aisleWidthFt: "1" })).toMatchObject({ aisleWidthFt: 3, racks: [{ levels: 1 }, { levels: 1 }, { levels: 1 }] });
+    expect(layoutSpecSchema.safeParse(clamped).success).toBe(true);
     const edited = applyImportEdits(spec, { levels: "6", slotsPerBay: "2", aisleWidthFt: "12" });
     expect(edited.racks.map((r) => [r.levels, r.slotsPerBay])).toEqual([
       [6, 2],

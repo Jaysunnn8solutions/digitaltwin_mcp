@@ -18,9 +18,10 @@ import { describeSelection, indexEvents, selectionTitle, type EventIndex } from 
 import { DEFAULT_SPEED } from "@/lib/twin-ui/clock";
 import { applyImportEdits, EMPTY_IMPORT_EDITS, formToScenario, issuesToErrors, scenarioToForm, type FormErrors, type ImportRackEdits, type ScenarioForm } from "@/lib/twin-ui/form";
 import { dayClock, minutes, num } from "@/lib/twin-ui/format";
-import { decodeHash, encodeHash, HashError, type HashSource } from "@/lib/twin-ui/hash";
+import { decodeHash, encodeHash, HASH_DEFAULTS, HASH_MAX_DAYS, HashError, type HashSource } from "@/lib/twin-ui/hash";
 import BuildingPicker, { BUILTIN, DC_NAMES, fetchSampleFiles, importSpecInWorker, readSessionSpec, type BuildingChoice } from "./BuildingPicker";
 import ComparePanel from "./ComparePanel";
+import { keepFocus } from "./focus";
 import HelpOverlay, { FirstRunHint } from "./HelpOverlay";
 import Hud, { type HudSnapshot } from "./Hud";
 import Inspector from "./Inspector";
@@ -43,7 +44,12 @@ import TwinScene, { type ClockView, type KeyAction, type ShotMode, type TwinScen
 export interface RunRecord {
   id: string;
   label: string;
+  /** The request that produced this run, its scenario without the layout: what the header chips, the URL and Copy link describe. */
   spec: RunSpec;
+  /** Where the building came from, for the link. */
+  src?: HashSource;
+  /** The building's display name at the time of the run. */
+  building: string;
   playback: Playback;
   world: WorldPayload;
   result: OperationsResult;
@@ -74,6 +80,28 @@ interface ViewFlags {
   legend: boolean;
 }
 
+/** The run row's fields as typed: clamped into RunNumbers on read, so a field can be cleared and retyped. */
+interface RunText {
+  dc: string;
+  week: string;
+  days: string;
+  seed: string;
+}
+
+interface RunNumbers {
+  dc: string;
+  week: number;
+  days: number;
+  seed: number;
+}
+
+/** Everything a run needs besides the worker; the hashchange path passes the decoded link's values without waiting for state to commit. */
+interface RunInputs {
+  run: RunNumbers;
+  form: ScenarioForm;
+  building: BuildingChoice;
+}
+
 const SITES = sites as unknown as Site[];
 const SKU_COUNT = manifest.counts.skus;
 const HINT_KEY = "twin.hint.v1";
@@ -94,13 +122,38 @@ function readHint(): boolean {
   }
 }
 
-/** Overlay buttons keep focus off themselves on mouse clicks, so Space afterwards still plays instead of re-firing the button. */
-function keepFocus(e: { preventDefault(): void }) {
-  e.preventDefault();
-}
-
 function prefersDark(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+}
+
+/** An integer in [min, max] from a text field; the fallback for a blank or unreadable one. */
+function clampInt(text: string, fallback: number, min: number, max: number): number {
+  const n = Number(text.trim());
+  if (text.trim() === "" || !Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function runFromText(t: RunText): RunNumbers {
+  return { dc: t.dc, week: clampInt(t.week, HASH_DEFAULTS.week, 1, 52), days: clampInt(t.days, HASH_DEFAULTS.days, 1, HASH_MAX_DAYS), seed: clampInt(t.seed, HASH_DEFAULTS.seed, 1, 2 ** 31 - 1) };
+}
+
+function textFromRun(r: RunNumbers): RunText {
+  return { dc: r.dc, week: String(r.week), days: String(r.days), seed: String(r.seed) };
+}
+
+function sourceOf(b: BuildingChoice): HashSource | undefined {
+  return b.kind === "session" ? "session" : b.kind === "sample" ? "sample" : undefined;
+}
+
+function buildingFromHash(src: HashSource | undefined): BuildingChoice {
+  return src === "session" ? readSessionSpec() : src === "sample" ? { kind: "sample", spec: null, name: "", error: null } : BUILTIN;
+}
+
+/** The scenario as a link carries it: the layout is handed over in-browser, never in a URL. */
+function withoutLayout(s: TwinScenario): TwinScenario {
+  const { layout, ...rest } = s;
+  void layout;
+  return rest;
 }
 
 /** The HUD's exact figures at t: the last checkpoint plus a replay of the events since; kpis(result) at the horizon. */
@@ -131,14 +184,19 @@ function runLabel(spec: RunSpec, building: string): string {
   return `${building} · week ${spec.startWeek} · ${spec.days} day${spec.days === 1 ? "" : "s"} · seed ${spec.seed}`;
 }
 
+/** The hash that replays a run (at minute t when given). */
+function hashOfRecord(rec: RunRecord, t?: number): string {
+  return encodeHash({ dc: rec.spec.dc, week: rec.spec.startWeek, days: rec.spec.days, seed: rec.spec.seed, t, src: rec.src, scenario: rec.spec.scenario });
+}
+
 // ---------------------------------------------------------------------------
 // The workbench
 // ---------------------------------------------------------------------------
 
 export default function TwinWorkbench() {
   const [hash] = useState(() => decodeHash(window.location.hash));
-  const [run, setRun] = useState({ dc: hash.dc, week: hash.week, days: hash.days, seed: hash.seed });
-  const [building, setBuilding] = useState<BuildingChoice>(() => (hash.src === "session" ? readSessionSpec() : hash.src === "sample" ? { kind: "sample", spec: null, name: "", error: null } : BUILTIN));
+  const [runText, setRunText] = useState<RunText>(() => textFromRun({ dc: hash.dc, week: hash.week, days: hash.days, seed: hash.seed }));
+  const [building, setBuilding] = useState<BuildingChoice>(() => buildingFromHash(hash.src));
   const [form, setForm] = useState<ScenarioForm>(() => scenarioToForm(hash.scenario));
   const [importEdits, setImportEdits] = useState<ImportRackEdits>(EMPTY_IMPORT_EDITS);
   const [workerErrors, setWorkerErrors] = useState<FormErrors>({});
@@ -166,7 +224,16 @@ export default function TwinWorkbench() {
   const sceneRef = useRef<TwinSceneHandle | null>(null);
   const toastTimer = useRef<number | null>(null);
   const autoRan = useRef(false);
+  /** The request behind each run in flight, so the record keeps what was actually run (the form may be edited meanwhile). */
+  const requests = useRef(new Map<string, { spec: RunSpec; src?: HashSource; building: string }>());
+  /** The hash this page last wrote itself, so its own replaceState is never mistaken for a navigation. */
+  const written = useRef<string>(window.location.hash);
+  /** A minute to seek to once the next run's playback is on screen (a link navigated to in this tab). */
+  const pendingSeek = useRef<number | null>(null);
+  /** The sample drawing's load in flight, shared by whoever asks for it while it runs. */
+  const sampleLoad = useRef<Promise<LayoutSpec | null> | null>(null);
 
+  const run = useMemo(() => runFromText(runText), [runText]);
   const shot: ShotMode | null = useMemo(() => (hash.shot ? { kind: "shot", t: hash.t ?? 0, cam: hash.cam } : hash.perf ? { kind: "perf", t: hash.t ?? 0, cam: hash.cam } : null), [hash]);
   // shot=1 alone captures the frame; with chrome=1 the page keeps its chrome so a capture shows the layout.
   const frameOnly = shot?.kind === "shot" && !hash.chrome;
@@ -183,7 +250,7 @@ export default function TwinWorkbench() {
     return {
       workerIds: world ? world.workers.map((w) => w.id) : [],
       roles: world ? [...new Set(world.workers.map((w) => w.role))] : ["Shift lead", "Forklift operator", "Receiver", "Order selector", "Loader"],
-      shiftIds: form.shifts.length ? form.shifts.map((s) => s.id).filter(Boolean) : init ? init.shifts.map((s) => s.id) : site.shifts.map((s) => s.id),
+      shiftIds: [...new Set(form.shifts.length ? form.shifts.map((s) => s.id).filter(Boolean) : init ? init.shifts.map((s) => s.id) : site.shifts.map((s) => s.id))],
       supplierIds: world ? world.suppliers.map((s) => s.id) : [],
       categories: world ? [...new Set(world.skus.map((s) => s.category))] : ["traditional"],
       skuCount: world ? world.skus.length : SKU_COUNT,
@@ -191,7 +258,11 @@ export default function TwinWorkbench() {
       std: DEFAULT_STANDARDS,
       imported,
       importEdits,
-      setImportEdits,
+      setImportEdits: (e: ImportRackEdits) => {
+        // Like updateForm: an edit invalidates the worker's last verdict on the form.
+        setImportEdits(e);
+        setWorkerErrors({});
+      },
     };
   }, [current, building, form.shifts, site, importEdits]);
   const tabCounts = useMemo(() => {
@@ -205,6 +276,14 @@ export default function TwinWorkbench() {
       disruptions: has("doorOutages", "forkliftOutages", "wmsOutages"),
     };
   }, [parsed.scenario, formCtx.imported, importEdits]);
+  /** The form or the run row no longer describes the run on screen. */
+  const edited = useMemo(() => {
+    if (!current) return false;
+    const s = parsed.scenario;
+    if (!s) return true;
+    const spec = current.spec;
+    return run.dc !== spec.dc || run.week !== spec.startWeek || run.days !== spec.days || run.seed !== spec.seed || sourceOf(building) !== current.src || JSON.stringify(s) !== JSON.stringify(spec.scenario);
+  }, [current, parsed.scenario, run, building]);
 
   const options: ViewerOptions = useMemo(() => ({ shadows: true, heat: view.heat, labels: view.labels, dayNight: view.dayNight, quality: view.quality, theme, debugSpeed: false }), [view.heat, view.labels, view.dayNight, view.quality, theme]);
 
@@ -213,7 +292,12 @@ export default function TwinWorkbench() {
   const canFollow = !!(current && selection?.kind === "entity" && current.playback.tracks[selection.entity]);
 
   // --- Worker ---
-  const latest = useRef<{ onMessage: (m: TwinResponse) => void; onWorkerError: (msg: string) => void }>({ onMessage: () => {}, onWorkerError: () => {} });
+  const latest = useRef<{ onMessage: (m: TwinResponse) => void; onWorkerError: (msg: string) => void; loadSample: () => Promise<LayoutSpec | null>; launch: (inputs: RunInputs) => void }>({
+    onMessage: () => {},
+    onWorkerError: () => {},
+    loadSample: () => Promise.resolve(null),
+    launch: () => {},
+  });
 
   const spawn = () => {
     const w = new Worker(new URL("../twin.worker.ts", import.meta.url), { type: "module" });
@@ -223,31 +307,42 @@ export default function TwinWorkbench() {
     return w;
   };
 
+  // Whatever worker is current at unmount is the one to terminate: Cancel replaces it, so the first one is not enough.
   useEffect(() => {
-    const w = spawn();
+    spawn();
     return () => {
-      w.terminate();
-      if (workerRef.current === w) workerRef.current = null;
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      runIdRef.current = "";
+      latest.current = { onMessage: () => {}, onWorkerError: () => {}, loadSample: () => Promise.resolve(null), launch: () => {} };
     };
   }, []);
 
-  const startRun = (overrideSpec?: LayoutSpec | null) => {
+  const writeHash = (h: string) => {
+    window.history.replaceState(null, "", h);
+    written.current = h;
+  };
+
+  const startRun = (overrideSpec?: LayoutSpec | null, inputs?: RunInputs) => {
     const w = workerRef.current;
     if (!w) return;
+    const useRun = inputs?.run ?? run;
+    const useForm = inputs?.form ?? form;
+    const useBuilding = inputs?.building ?? building;
     setWorkerErrors({});
-    const res = formToScenario(form);
+    const res = formToScenario(useForm);
     if (!res.scenario) {
       setTab("scenario");
       setSheetOpen(true);
       setStatus({ kind: "error", name: "Form", message: "Fix the highlighted fields first." });
       return;
     }
-    const spec = overrideSpec !== undefined ? overrideSpec : building.kind === "builtin" ? null : building.spec;
-    if (building.kind !== "builtin" && !spec) {
-      setStatus({ kind: "error", name: "Building", message: building.error ?? "The imported building has not loaded yet." });
+    const spec = overrideSpec !== undefined ? overrideSpec : useBuilding.kind === "builtin" ? null : useBuilding.spec;
+    if (useBuilding.kind !== "builtin" && !spec) {
+      setStatus({ kind: "error", name: "Building", message: useBuilding.error ?? "The imported building has not loaded yet." });
       return;
     }
-    const check = spaceCheck(form, { ...formCtx, imported: spec });
+    const check = spaceCheck(useForm, { ...formCtx, imported: spec });
     if (check.error) {
       setTab("scenario");
       setScenarioTab("space");
@@ -258,13 +353,15 @@ export default function TwinWorkbench() {
     const scenario: TwinScenario = spec ? { ...res.scenario, layout: applyImportEdits(spec, importEdits) } : res.scenario;
     const runId = `run-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
     runIdRef.current = runId;
-    const runSpec: RunSpec = { dc: run.dc, startWeek: run.week, days: run.days, seed: run.seed, scenario };
+    const runSpec: RunSpec = { dc: useRun.dc, startWeek: useRun.week, days: useRun.days, seed: useRun.seed, scenario };
+    const src = sourceOf(useBuilding);
+    const name = useBuilding.kind === "builtin" ? (DC_NAMES[useRun.dc] ?? useRun.dc) : useBuilding.name || "imported building";
+    requests.current.set(runId, { spec: { ...runSpec, scenario: res.scenario }, src, building: name });
     const req: TwinRequest = { type: "run", runId, spec: runSpec, keepEvents: true };
-    setStatus({ kind: "running", phase: "context", day: 0, days: run.days });
+    setStatus({ kind: "running", phase: "context", day: 0, days: useRun.days });
     w.postMessage(req);
     try {
-      const src: HashSource | undefined = building.kind === "session" ? "session" : building.kind === "sample" ? "sample" : undefined;
-      window.history.replaceState(null, "", encodeHash({ dc: run.dc, week: run.week, days: run.days, seed: run.seed, src, scenario: res.scenario }));
+      writeHash(encodeHash({ dc: useRun.dc, week: useRun.week, days: useRun.days, seed: useRun.seed, src, scenario: res.scenario }));
       setLinkMsg(null);
     } catch (err) {
       setLinkMsg(err instanceof HashError ? err.message : String(err));
@@ -274,22 +371,40 @@ export default function TwinWorkbench() {
   const cancelRun = () => {
     workerRef.current?.terminate();
     runIdRef.current = "";
+    requests.current.clear();
     spawn();
     setStatus({ kind: "idle" });
   };
 
-  const loadSample = async (): Promise<LayoutSpec | null> => {
-    try {
-      const files = await fetchSampleFiles(SAMPLE_FILES);
-      const result = await importSpecInWorker(files);
-      if (!result.stats) throw new Error(result.buildError ?? "The sample drawing has no racks.");
-      const spec = compactSpec(result.spec);
-      setBuilding({ kind: "sample", spec, name: result.spec.name, error: null });
-      return spec;
-    } catch (err) {
-      setBuilding({ kind: "sample", spec: null, name: "", error: err instanceof Error ? err.message : String(err) });
-      return null;
-    }
+  const loadSample = (): Promise<LayoutSpec | null> => {
+    if (sampleLoad.current) return sampleLoad.current;
+    const p = (async () => {
+      try {
+        const files = await fetchSampleFiles(SAMPLE_FILES);
+        const result = await importSpecInWorker(files);
+        if (!result.stats) throw new Error(result.buildError ?? "The sample drawing has no racks.");
+        const spec = compactSpec(result.spec);
+        setBuilding({ kind: "sample", spec, name: result.spec.name, error: null });
+        return spec;
+      } catch (err) {
+        setBuilding({ kind: "sample", spec: null, name: "", error: err instanceof Error ? err.message : String(err) });
+        return null;
+      } finally {
+        sampleLoad.current = null;
+      }
+    })();
+    sampleLoad.current = p;
+    return p;
+  };
+
+  /** Start a run from explicit inputs, cancelling one in flight; the sample drawing is fetched first when the link asks for it. */
+  const launch = (inputs: RunInputs) => {
+    if (runIdRef.current) cancelRun();
+    if (inputs.building.kind === "sample" && !inputs.building.spec) {
+      void loadSample().then((spec) => {
+        if (spec) startRun(spec, { ...inputs, building: { kind: "sample", spec, name: "", error: null } });
+      });
+    } else startRun(undefined, inputs);
   };
 
   const onMessage = (m: TwinResponse) => {
@@ -306,7 +421,7 @@ export default function TwinWorkbench() {
         } else if (building.kind !== "builtin" && !building.spec) {
           setNotice(building.error ?? "The imported building is missing.");
           setBuilding(BUILTIN);
-          startRun(null);
+          startRun(null, { run, form, building: BUILTIN });
         } else startRun();
         break;
       }
@@ -320,11 +435,16 @@ export default function TwinWorkbench() {
           setStatus({ kind: "error", name: "Playback", message: "The playback has no init event." });
           return;
         }
-        const buildingName = m.world.spec.source.format === "builtin" ? (DC_NAMES[m.world.dc.id] ?? m.world.dc.id) : m.world.spec.name;
+        const req = requests.current.get(m.runId);
+        requests.current.delete(m.runId);
+        const buildingName = req?.building ?? (m.world.spec.source.format === "builtin" ? (DC_NAMES[m.world.dc.id] ?? m.world.dc.id) : m.world.spec.name);
+        const spec: RunSpec = req ? { ...req.spec, scenario: withoutLayout(req.spec.scenario) } : { dc: m.world.dc.id, startWeek: init.startWeek, days: init.days, seed: init.seed, scenario: {} };
         const rec: RunRecord = {
           id: m.runId,
-          label: runLabel({ dc: m.world.dc.id, startWeek: init.startWeek, days: init.days, seed: init.seed, scenario: {} }, buildingName),
-          spec: { dc: m.world.dc.id, startWeek: init.startWeek, days: init.days, seed: init.seed, scenario: {} },
+          label: runLabel(spec, buildingName),
+          spec,
+          src: req?.src,
+          building: buildingName,
           playback: m.playback,
           world: m.world,
           result: m.result,
@@ -343,6 +463,7 @@ export default function TwinWorkbench() {
       case "error":
         if (m.runId !== runIdRef.current) return;
         runIdRef.current = "";
+        requests.current.delete(m.runId);
         setStatus({ kind: "error", name: m.name, message: m.message });
         if (m.issues) {
           setWorkerErrors(issuesToErrors(m.issues.map((i) => ({ path: i.path ? i.path.split(".") : [], message: i.message }))));
@@ -353,13 +474,54 @@ export default function TwinWorkbench() {
         break;
     }
   };
+  // A worker that fails to load stays dead: replace it, as Cancel does, so the next Run has somewhere to go.
   const onWorkerError = (msg: string) => {
+    workerRef.current?.terminate();
     runIdRef.current = "";
+    requests.current.clear();
+    spawn();
     setStatus({ kind: "error", name: "Worker", message: msg });
   };
   useEffect(() => {
-    latest.current = { onMessage, onWorkerError };
+    latest.current = { onMessage, onWorkerError, loadSample, launch };
   });
+
+  // The sample drawing loads whenever the choice needs it (the picker, a link), not only on the first page load.
+  useEffect(() => {
+    if (building.kind !== "sample" || building.spec || building.error) return;
+    void latest.current.loadSample();
+  }, [building]);
+
+  // A link pasted into this tab's address bar is a fragment navigation: the document stays, so the page runs the new link itself.
+  useEffect(() => {
+    const onHashChange = () => {
+      const h = window.location.hash;
+      if (h === written.current) return;
+      const decoded = decodeHash(h);
+      const nextRun: RunNumbers = { dc: decoded.dc, week: decoded.week, days: decoded.days, seed: decoded.seed };
+      const nextForm = scenarioToForm(decoded.scenario);
+      const nextBuilding = buildingFromHash(decoded.src);
+      setRunText(textFromRun(nextRun));
+      setForm(nextForm);
+      setBuilding(nextBuilding);
+      setWorkerErrors({});
+      setImportEdits(EMPTY_IMPORT_EDITS);
+      setNotice(decoded.layoutDropped ? "This link carried an imported building. Layouts never travel in a URL; the rest of the scenario was kept." : null);
+      pendingSeek.current = decoded.t ?? 0;
+      written.current = h;
+      latest.current.launch({ run: nextRun, form: nextForm, building: nextBuilding });
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // The scene binds a new playback in its own effect first (child effects run before the parent's); then the link's minute applies.
+  useEffect(() => {
+    if (!current || pendingSeek.current === null) return;
+    const t = pendingSeek.current;
+    pendingSeek.current = null;
+    sceneRef.current?.seek(t);
+  }, [current]);
 
   // --- Environment listeners ---
   useEffect(() => {
@@ -467,10 +629,11 @@ export default function TwinWorkbench() {
       // A blocked storage just means the hint returns next visit.
     }
   };
+  // The link describes the run on screen at this minute, whatever the form says now.
   const copyLink = async () => {
+    if (!current) return;
     try {
-      const src: HashSource | undefined = building.kind === "session" ? "session" : building.kind === "sample" ? "sample" : undefined;
-      const h = encodeHash({ dc: run.dc, week: run.week, days: run.days, seed: run.seed, t: Math.round(clock.t), src, scenario: parsed.scenario ?? undefined });
+      const h = hashOfRecord(current, Math.round(clock.t));
       await navigator.clipboard.writeText(`${window.location.origin}/twin${h}`);
       setLinkMsg("Link copied");
     } catch (err) {
@@ -482,15 +645,26 @@ export default function TwinWorkbench() {
     setPrevious(current);
     setCurrent(previous);
     setSelection(null);
+    // The URL tracks what plays.
+    try {
+      writeHash(hashOfRecord(previous));
+    } catch {
+      // A run whose scenario cannot be linked keeps the URL as it was.
+    }
   };
   const updateForm = (fn: (f: ScenarioForm) => ScenarioForm) => {
     setForm(fn);
     setWorkerErrors({});
   };
+  const setRunField = (key: keyof RunText, value: string) => setRunText((r) => ({ ...r, [key]: value }));
+  /** On blur the field shows the value the run will use (clamped, or the default for a blank). */
+  const commitRunField = (key: "week" | "days" | "seed") => setRunText((r) => ({ ...r, [key]: String(runFromText(r)[key]) }));
 
   const running = status.kind === "running";
   const progressShare = status.kind === "running" ? (status.phase === "context" ? 0.05 : status.phase === "compile" ? 0.95 : 0.05 + (0.9 * Math.max(0, status.day - 1)) / Math.max(1, status.days)) : 0;
   const buildingName = building.kind === "builtin" ? (DC_NAMES[run.dc] ?? run.dc) : building.name || "imported building";
+  // The header chips describe the run on screen; before the first run, the run row.
+  const chips = current ? { building: current.building, week: current.spec.startWeek, days: current.spec.days, seed: current.spec.seed } : { building: buildingName, week: run.week, days: run.days, seed: run.seed };
   const showSide = (id: SideTab) => {
     setTab(id);
     if (narrow) setSheetOpen(id === tab ? !sheetOpen : true);
@@ -522,19 +696,24 @@ export default function TwinWorkbench() {
         </span>
         <h1>3D twin</h1>
         <span className="twin-runline">
-          <span className="twin-chip">{buildingName}</span>
-          <span className="twin-chip">week {run.week}</span>
+          <span className="twin-chip">{chips.building}</span>
+          <span className="twin-chip">week {chips.week}</span>
           <span className="twin-chip">
-            {run.days} day{run.days === 1 ? "" : "s"}
+            {chips.days} day{chips.days === 1 ? "" : "s"}
           </span>
-          <span className="twin-chip">seed {run.seed}</span>
+          <span className="twin-chip">seed {chips.seed}</span>
+          {edited && (
+            <span className="twin-chip edited" title="The scenario or the run row has changed since this run; Run again to see it">
+              edited
+            </span>
+          )}
           {current && (
             <span className="sub twin-ranin" title={`Context, simulation and playback compile: ${num(current.ms.context)} + ${num(current.ms.simulate)} + ${num(current.ms.compile)} ms`}>
               ran in {num(current.ms.context + current.ms.simulate + current.ms.compile)} ms · {current.playback.jobs.length.toLocaleString("en-US")} jobs · {current.playback.events.length.toLocaleString("en-US")} events
             </span>
           )}
         </span>
-        <div className="twin-actions">
+        <div className="twin-actions" onMouseDown={keepFocus}>
           {running && (
             <>
               <span className="twin-chip busy">{status.phase === "context" ? "building the twin" : status.phase === "compile" ? "compiling the playback" : `simulating day ${status.day} of ${status.days}`}</span>
@@ -589,9 +768,9 @@ export default function TwinWorkbench() {
             </div>
           )}
           {/* Overlays are flex stacks, not free-floating boxes: the toolbar and the clock share the first row, the HUD strip gets the whole width under them however the toolbar wraps, and nothing covers anything else. */}
-          <div className="twin-ovl twin-ovl-top">
+          <div className="twin-ovl twin-ovl-top" onMouseDown={keepFocus}>
             <div className="twin-ovl-row">
-              <div className="twin-ovl-col left" onMouseDown={keepFocus}>
+              <div className="twin-ovl-col left">
                 <div className="twin-overlay twin-campill" role="toolbar" aria-label="Camera">
                   <button type="button" className={cameraMode === "orbit" ? "on" : ""} onClick={() => sceneRef.current?.setCamera("orbit")} title="O: orbit (drag to turn, wheel to zoom, right-drag to pan)">
                     Orbit
@@ -652,7 +831,7 @@ export default function TwinWorkbench() {
             </div>
             {!narrow && hudEl}
           </div>
-          <div className="twin-ovl twin-ovl-bottom">
+          <div className="twin-ovl twin-ovl-bottom" onMouseDown={keepFocus}>
             <div className="twin-ovl-col left">
               {!narrow && hintEl}
               {current && <Ticker playback={current.playback} t={clock.t} onSelect={selectEntity} onSeek={seek} />}
@@ -673,7 +852,7 @@ export default function TwinWorkbench() {
                 ["help", "Help"],
               ] as Array<[SideTab, string]>
             ).map(([id, label]) => (
-              <button type="button" key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => showSide(id)}>
+              <button type="button" key={id} id={`twin-tab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`twin-panel-${id}`} className={tab === id ? "on" : ""} onClick={() => showSide(id)}>
                 {label}
                 {id === "scenario" && errorCount > 0 && <span className="n">{errorCount}</span>}
               </button>
@@ -685,34 +864,39 @@ export default function TwinWorkbench() {
               onTab={setScenarioTab}
               counts={tabCounts}
               errorCount={errorCount}
+              panelId="twin-panel-scenario"
+              labelledBy="twin-tab-scenario"
               runControls={
                 <>
-                  <BuildingPicker dc={run.dc} dcs={dcs} value={building} disabled={running} onDc={(dc) => setRun((r) => ({ ...r, dc }))} onChange={setBuilding} />
+                  <BuildingPicker dc={run.dc} dcs={dcs} value={building} disabled={running} onDc={(dc) => setRunField("dc", dc)} onChange={setBuilding} />
                   <div className="row">
                     <label>
                       Week{" "}
-                      <input type="number" min={1} max={52} value={run.week} onChange={(e) => setRun((r) => ({ ...r, week: Math.max(1, Math.min(52, Math.round(Number(e.target.value) || 1))) }))} title="Calendar week the run starts on its Monday (44 is Halloween week)" />
+                      <input type="number" min={1} max={52} value={runText.week} onChange={(e) => setRunField("week", e.target.value)} onBlur={() => commitRunField("week")} title="Calendar week the run starts on its Monday (44 is Halloween week)" />
                     </label>
                     <label>
                       Days{" "}
-                      <input type="number" min={1} max={28} value={run.days} onChange={(e) => setRun((r) => ({ ...r, days: Math.max(1, Math.min(28, Math.round(Number(e.target.value) || 1))) }))} title="1 to 28 days" />
+                      <input type="number" min={1} max={HASH_MAX_DAYS} value={runText.days} onChange={(e) => setRunField("days", e.target.value)} onBlur={() => commitRunField("days")} title={`1 to ${HASH_MAX_DAYS} days`} />
                     </label>
                     <label>
                       Seed{" "}
-                      <input type="number" min={1} value={run.seed} onChange={(e) => setRun((r) => ({ ...r, seed: Math.max(1, Math.round(Number(e.target.value) || 1)) }))} title="Seed 1 replays a tool's first run exactly" />
+                      <input type="number" min={1} value={runText.seed} onChange={(e) => setRunField("seed", e.target.value)} onBlur={() => commitRunField("seed")} title="Seed 1 replays a tool's first run exactly" />
                     </label>
-                    {!running ? (
-                      <button type="button" className="primary" onClick={() => startRun()}>
-                        Run
+                    {/* The buttons alone keep focus off themselves (Space then plays, not re-runs); the inputs beside them still take the caret. */}
+                    <span className="twin-runbtns" onMouseDown={keepFocus}>
+                      {!running ? (
+                        <button type="button" className="primary" onClick={() => startRun()}>
+                          Run
+                        </button>
+                      ) : (
+                        <button type="button" onClick={cancelRun}>
+                          Cancel
+                        </button>
+                      )}
+                      <button type="button" className="chip" onClick={() => updateForm(() => scenarioToForm({}))} title="Clear every scenario field">
+                        Reset
                       </button>
-                    ) : (
-                      <button type="button" onClick={cancelRun}>
-                        Cancel
-                      </button>
-                    )}
-                    <button type="button" className="chip" onClick={() => updateForm(() => scenarioToForm({}))} title="Clear every scenario field">
-                      Reset
-                    </button>
+                    </span>
                   </div>
                   {current && current.world.changes.length > 0 && (
                     <ul className="twin-changes">
@@ -734,18 +918,22 @@ export default function TwinWorkbench() {
             </ScenarioPanel>
           )}
           {tab === "inspector" && (
-            <div className="twin-tabbody">
+            <div className="twin-tabbody" role="tabpanel" id="twin-panel-inspector" aria-labelledby="twin-tab-inspector">
               <Inspector title={current ? selectionTitle(selection, current.playback, current.world) : "Nothing selected"} selection={selection} sections={sections} canFollow={canFollow} following={cameraMode === "follow"} onFollow={() => selection?.kind === "entity" && sceneRef.current?.setCamera("follow", selection.entity)} onClear={() => setSelection(null)} />
             </div>
           )}
-          {tab === "network" && <div className="twin-tabbody">{current ? <NetworkInset world={current.world} playback={current.playback} index={current.index} t={clock.t} onSelect={selectEntity} /> : <p className="sub">Run a scenario first.</p>}</div>}
+          {tab === "network" && (
+            <div className="twin-tabbody" role="tabpanel" id="twin-panel-network" aria-labelledby="twin-tab-network">
+              {current ? <NetworkInset world={current.world} playback={current.playback} index={current.index} t={clock.t} onSelect={selectEntity} /> : <p className="sub">Run a scenario first.</p>}
+            </div>
+          )}
           {tab === "compare" && (
-            <div className="twin-tabbody">
+            <div className="twin-tabbody" role="tabpanel" id="twin-panel-compare" aria-labelledby="twin-tab-compare">
               <ComparePanel a={previous ? { label: previous.label, kpis: previous.kpis, changes: previous.world.changes } : null} b={current ? { label: current.label, kpis: current.kpis, changes: current.world.changes } : null} onSwap={swapRuns} />
             </div>
           )}
           {tab === "help" && (
-            <div className="twin-tabbody">
+            <div className="twin-tabbody" role="tabpanel" id="twin-panel-help" aria-labelledby="twin-tab-help">
               <h3>What you are looking at</h3>
               <p>
                 A discrete-event simulation of one distribution center runs in a web worker in your browser, records every event, and the playback compiles them into the animation: supplier

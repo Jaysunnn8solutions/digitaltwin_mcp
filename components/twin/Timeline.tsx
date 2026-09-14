@@ -206,7 +206,8 @@ export default function Timeline({ playback, compare, t, playing, speed, skipQui
 
   return (
     <div className="twin-timeline">
-      <div className="twin-transport">
+      {/* A mouse click on a transport button leaves focus where it was, so Space still plays afterwards instead of re-firing "+1 min"; Tab focus and the checkbox's click are unaffected. */}
+      <div className="twin-transport" onMouseDown={(e) => e.preventDefault()}>
         <button type="button" className="play primary" onClick={onTogglePlay} disabled={!playback} title="Space">
           {playing ? "❚❚ Pause" : "▶ Play"}
         </button>

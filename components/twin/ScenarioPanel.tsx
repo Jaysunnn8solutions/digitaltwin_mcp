@@ -261,11 +261,11 @@ export function RowList<R extends { [K in keyof R]: string }>({ title, help, row
   );
 }
 
-/** Suggestion lists the text inputs reference by id. */
+/** Suggestion lists the text inputs reference by id. Values are de-duplicated: two shift rows with the same id (the state the engine's own error describes) must not become two options with one key. */
 export function Datalists({ ctx }: { ctx: FormContext }) {
   const list = (id: string, values: string[]) => (
     <datalist id={id}>
-      {values.map((v) => (
+      {[...new Set(values)].map((v) => (
         <option key={v} value={v} />
       ))}
     </datalist>
@@ -291,25 +291,30 @@ interface PanelProps {
   /** Fields set per tab, for the badges. */
   counts: Record<ScenarioTab, number>;
   errorCount: number;
+  /** The side tab's panel id and the id of the tab button that labels it. */
+  panelId: string;
+  labelledBy: string;
   runControls: ReactNode;
   children: ReactNode;
 }
 
-export default function ScenarioPanel({ tab, onTab, counts, errorCount, runControls, children }: PanelProps) {
+export default function ScenarioPanel({ tab, onTab, counts, errorCount, panelId, labelledBy, runControls, children }: PanelProps) {
   return (
     <>
       <div className="twin-runrow">{runControls}</div>
-      <div className="twin-tabbody">
+      <div className="twin-tabbody" role="tabpanel" id={panelId} aria-labelledby={labelledBy}>
         <div className="twin-subtabs" role="tablist">
           {SCENARIO_TABS.map(([id, label]) => (
-            <button type="button" key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => onTab(id)}>
+            <button type="button" key={id} id={`twin-subtab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`twin-subpanel-${id}`} className={tab === id ? "on" : ""} onClick={() => onTab(id)}>
               {label}
               {counts[id] > 0 ? ` · ${counts[id]}` : ""}
             </button>
           ))}
         </div>
         {errorCount > 0 && <p className="twin-err">{errorCount === 1 ? "One field needs attention before the run." : `${errorCount} fields need attention before the run.`}</p>}
-        {children}
+        <div role="tabpanel" id={`twin-subpanel-${tab}`} aria-labelledby={`twin-subtab-${tab}`}>
+          {children}
+        </div>
       </div>
     </>
   );

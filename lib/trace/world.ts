@@ -16,8 +16,17 @@ export const PICK_LEVEL_FT = 1.5;
 export const RESERVE_LEVEL_FT = 5;
 /** Yard geometry (feet outside the dock wall). */
 export const ROAD_Y = -60;
-export const QUEUE_FIRST_FT = 40;
-export const QUEUE_PITCH_FT = 45;
+/**
+ * The truck model is 63 ft from its tracked rear along the nose (lib/three/
+ * geometry.ts TRUCK_LENGTH; duplicated here so the yard needs no three.js).
+ * Queue spot 0 is placed beyond a docked trailer (0..63 ft out) and beyond the
+ * road, and the pitch is a truck length plus clearance, so a waiting truck
+ * never overlaps the one at the door, the next one in line or the road the
+ * undocking trucks drive along. world.test.ts pins the relation.
+ */
+export const YARD_TRUCK_LENGTH_FT = 63;
+export const QUEUE_FIRST_FT = 75;
+export const QUEUE_PITCH_FT = 70;
 export const QUEUE_SPOTS = 3;
 export const SPAWN_MARGIN_FT = 80;
 /** Floor on how far outside a door the road point is (roadPoint): room to swing before backing in. */

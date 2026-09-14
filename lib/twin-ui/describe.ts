@@ -348,7 +348,7 @@ function shiftToday(index: EventIndex, id: string, t: number): DescribeRow[] {
   const out = evs.find((e) => e.state === "out");
   if (absent) rows.push(fact("Today", `absent from ${absent.shift ?? "shift"}`));
   else if (inEv) {
-    rows.push(fact("Today", `${inEv.shift ?? "shift"} ${clockOf(inEv.shiftStart ?? 0)}–${clockOf(inEv.shiftEnd ?? 0)} as ${inEv.primary ?? "crew"}, break ${inEv.breakMin ?? 0} min at ${clockOf(inEv.breakAt ?? 0)}, ${inEv.indirectMin ?? 0} min indirect`));
+    rows.push(fact("Today", `${inEv.shift ?? "the"} shift ${clockOf(inEv.shiftStart ?? 0)}–${clockOf(inEv.shiftEnd ?? 0)} as ${inEv.primary ?? "crew"}, break ${inEv.breakMin ?? 0} min at ${clockOf(inEv.breakAt ?? 0)}, ${inEv.indirectMin ?? 0} min indirect`));
     if (out) rows.push(fact("Clocked out", `${clockOf(out.t)}${(out.overtimeMin ?? 0) > 0.5 ? ` after ${minutes(out.overtimeMin ?? 0)} of overtime` : ""}`));
   } else rows.push(fact("Today", "not clocked in yet"));
   return rows;
@@ -409,6 +409,12 @@ function describeVehicle(entity: number, def: EntityDef, pb: Playback, world: Wo
   return sections;
 }
 
+/** A raw lane index as the inspector words it: past LANE_SLOTS pallets a lane stacks, tier by tier, on the same spots. */
+function laneSpot(slot: number): string {
+  const tier = Math.floor(slot / LANE_SLOTS);
+  return `spot ${(slot % LANE_SLOTS) + 1}${tier > 0 ? `, tier ${tier + 1}` : ""}`;
+}
+
 function palletPlace(pb: Playback, world: WorldPayload, ordinal: number, t: number): string {
   const tl = pb.pallets;
   const r = csrRowAt(tl, ordinal, t);
@@ -422,7 +428,7 @@ function palletPlace(pb: Playback, world: WorldPayload, ordinal: number, t: numb
     case PalletAt.TrailerIn:
       return `on the supplier trailer (${pb.entities[ref]?.label ?? ref})`;
     case PalletAt.DockLane:
-      return `dock lane ${doorId(world, ref) ?? ref}, spot ${slot + 1}`;
+      return `dock lane ${doorId(world, ref) ?? ref}, ${laneSpot(slot)}`;
     case PalletAt.Forklift:
       return `on ${pb.entities[ref]?.label ?? `forklift ${ref}`}`;
     case PalletAt.Rack:
@@ -430,7 +436,7 @@ function palletPlace(pb: Playback, world: WorldPayload, ordinal: number, t: numb
     case PalletAt.PackStation:
       return `at pack station ${ref + 1}`;
     case PalletAt.StagingLane:
-      return `staging lane ${doorId(world, ref) ?? ref}, spot ${slot + 1}`;
+      return `staging lane ${doorId(world, ref) ?? ref}, ${laneSpot(slot)}`;
     case PalletAt.Jack:
       return `on ${pb.entities[ref]?.label ?? `pallet jack ${ref}`}`;
     case PalletAt.TrailerOut:
@@ -482,7 +488,9 @@ function visualDoorOf(pb: Playback, world: WorldPayload, entity: number, t: numb
 function describeTruckIn(entity: number, def: EntityDef, pb: Playback, world: WorldPayload, t: number, index: EventIndex): DescribeSection[] {
   const po = index.po.get(String(def.meta.po));
   const rows: DescribeRow[] = [];
-  rows.push(fact("Purchase order", `${String(def.meta.po)} from ${String(def.meta.supplier)}${def.meta.importer ? " (importer: cases get compliance labels at receipt)" : ""}`));
+  const supplierId = String(def.meta.supplier);
+  const supplier = world.suppliers.find((s) => s.id === supplierId);
+  rows.push(fact("Purchase order", `${String(def.meta.po)} from ${supplier ? `${supplier.name} (${supplierId})` : supplierId}${def.meta.importer ? " (importer: cases get compliance labels at receipt)" : ""}`));
   rows.push(fact("Pallets", String(def.meta.pallets)));
   if (po?.placed) rows.push(fact("Placed", `day ${po.placed.placedDay + 1}, ${plural(po.placed.cases, "case")}, due day ${po.placed.arriveDay + 1}`));
   if (po?.scheduled) rows.push(fact("Appointment", `${clockOf(po.scheduled.appointment)}, expected ${clockOf(po.scheduled.eta)}`));

@@ -4,6 +4,13 @@
 // it into a client or worker chunk, Turbopack does not fail the build: it
 // ships a stub that throws in the browser. This fails the build instead, and
 // names the chunks, so the mistake is caught before deploy.
+//
+// Only .next/static/chunks/*.js is scanned. Turbopack also publishes the raw
+// worker sources (.next/static/media/twin.worker.<hash>.ts and
+// import.worker.<hash>.ts) as static assets, because `new URL("./x.worker.ts",
+// import.meta.url)` is handled as an asset reference as well as a worker
+// entry; the Worker itself boots the compiled chunk, so those copies are
+// inert and are listed below for the record rather than scanned.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -43,3 +50,10 @@ if (offending.length > 0) {
 }
 
 console.log(`assert-no-node-builtins: ${files.length} browser chunk(s) clean (no ${MARKERS.join(", ")}).`);
+
+// Worker source copies under static/media are not code the browser runs; name them so the output is not a surprise.
+const media = path.join(path.dirname(chunks), "media");
+if (existsSync(media) && statSync(media).isDirectory()) {
+  const copies = readdirSync(media).filter((name) => /\.worker\.[^.]+\.ts$/.test(name));
+  if (copies.length > 0) console.log(`assert-no-node-builtins: ${copies.length} inert worker source cop${copies.length === 1 ? "y" : "ies"} under static/media (not scanned): ${copies.join(", ")}`);
+}

@@ -114,17 +114,32 @@ function shotUrl(b, preset) {
 // replies; events are not needed, the page's title is polled instead.
 // ---------------------------------------------------------------------------
 
+// A request the browser never answers (seen on the dev box: browser and tab
+// up, renderers running, no reply, no close) would otherwise wait forever,
+// past every --timeout, since only the title poll has a deadline. A bounded
+// wait per request and per handshake turns that into a failed shot instead.
+const REPLY_MS = 30_000;
+
 function connect(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     const pending = new Map();
     let nextId = 0;
+    const handshake = setTimeout(() => {
+      ws.close();
+      reject(new Error(`no DevTools handshake from ${wsUrl} in ${REPLY_MS} ms`));
+    }, REPLY_MS);
     ws.addEventListener("open", () => {
+      clearTimeout(handshake);
       resolve({
         send(method, params = {}) {
           return new Promise((res, rej) => {
             const id = ++nextId;
-            pending.set(id, { res, rej });
+            const timer = setTimeout(() => {
+              pending.delete(id);
+              rej(new Error(`no reply to ${method} in ${REPLY_MS} ms`));
+            }, REPLY_MS);
+            pending.set(id, { res, rej, timer });
             ws.send(JSON.stringify({ id, method, params }));
           });
         },
@@ -138,12 +153,19 @@ function connect(wsUrl) {
       const p = msg.id !== undefined ? pending.get(msg.id) : undefined;
       if (!p) return;
       pending.delete(msg.id);
+      clearTimeout(p.timer);
       if (msg.error) p.rej(new Error(`${msg.error.message} (${msg.error.code})`));
       else p.res(msg.result);
     });
-    ws.addEventListener("error", () => reject(new Error(`could not connect to ${wsUrl}`)));
+    ws.addEventListener("error", () => {
+      clearTimeout(handshake);
+      reject(new Error(`could not connect to ${wsUrl}`));
+    });
     ws.addEventListener("close", () => {
-      for (const p of pending.values()) p.rej(new Error("DevTools connection closed"));
+      for (const p of pending.values()) {
+        clearTimeout(p.timer);
+        p.rej(new Error("DevTools connection closed"));
+      }
       pending.clear();
     });
   });

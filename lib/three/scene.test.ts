@@ -10,7 +10,7 @@ import sitesJson from "../../data/sites.json";
 import type { LayoutSpec } from "../layout/spec";
 import { buildLayout, siteToSpec, withDoorCounts } from "../twin/layout";
 import type { Site } from "../twin/types";
-import { buildBuilding, FIXED_CHILDREN, worldFromLayout } from "./building";
+import { buildBuilding, FIXED_CHILDREN, PLATE_W, worldFromLayout } from "./building";
 import { buildEnvironment, SKY_RADIUS } from "./environment";
 import { cartGeometry, forkliftParts, jackParts, palletGeometry, ResourceTracker, triangleCount, truckParts, workerParts } from "./geometry";
 import { DOOR_COLORS, STATE_COLORS, SURFACES, THEMES, darken } from "./palette";
@@ -101,7 +101,7 @@ describe("buildBuilding", () => {
     expect((building.doorPlates.material as MeshBasicMaterial).map).toBeNull();
     // Door 0 is on the dock wall (inward +y): its outside plate is just outside the wall, at plate height.
     const f = world.frames[0];
-    expect(pos.getX(0)).toBeCloseTo(f.origin[0] - 2.5, 5);
+    expect(pos.getX(0)).toBeCloseTo(f.origin[0] - PLATE_W / 2, 5);
     expect(pos.getZ(0)).toBeGreaterThan(0.5);
     expect(pos.getY(2)).toBeGreaterThan(pos.getY(0));
   });

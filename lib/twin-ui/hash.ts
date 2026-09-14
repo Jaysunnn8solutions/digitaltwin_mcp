@@ -130,11 +130,24 @@ export function encodeScenario(scenario: TwinScenario | undefined): string | nul
   return encoded;
 }
 
+/**
+ * Cap on the inflated scenario JSON. The encoder never emits more than
+ * HASH_MAX_SCENARIO_BYTES of deflate, and a real scenario inflates to a few
+ * kilobytes; a crafted link could inflate to gigabytes (a 260 KB link holds
+ * 190 MB of zeros), so the decoder refuses oversized input before inflating
+ * and inflates into a fixed buffer with one spare byte as the overflow
+ * sentinel (fflate truncates silently when the buffer is full).
+ */
+export const HASH_MAX_INFLATED_BYTES = 256 * 1024;
+
 function decodeScenario(raw: string | null): { scenario: TwinScenario; layoutDropped: boolean } {
   if (!raw) return { scenario: {}, layoutDropped: false };
+  if (raw.length > HASH_MAX_SCENARIO_BYTES) return { scenario: {}, layoutDropped: false };
   let parsed: unknown;
   try {
-    parsed = JSON.parse(strFromU8(inflateSync(fromBase64Url(raw))));
+    const out = inflateSync(fromBase64Url(raw), { out: new Uint8Array(HASH_MAX_INFLATED_BYTES + 1) });
+    if (out.length > HASH_MAX_INFLATED_BYTES) return { scenario: {}, layoutDropped: false };
+    parsed = JSON.parse(strFromU8(out));
   } catch {
     return { scenario: {}, layoutDropped: false };
   }

@@ -165,11 +165,13 @@ function frameAngle(f: DoorFrame): number {
 // Door number plates: one quad per door face, lettered from a canvas atlas
 // ---------------------------------------------------------------------------
 
-const PLATE_W = 5;
-const PLATE_H = 2;
+/** Plate size in feet: wide enough that a door number reads from the dock preset (~3 px per foot). */
+export const PLATE_W = 7;
+export const PLATE_H = 2.8;
 const ATLAS_COLS = 8;
 const CELL_W = 160;
-const CELL_H = 56;
+/** Same aspect as the plate, so the lettering is not stretched. */
+const CELL_H = 64;
 
 /** Draws every label into one canvas; null under Node or when the labels would not fit a 4096 px texture. */
 function plateAtlas(labels: string[]): CanvasTexture | null {
@@ -270,7 +272,9 @@ export function buildBuilding(spec: LayoutSpec, layout: Layout, world: World, op
   const stationMat = tracker.material(new MeshLambertMaterial({ color: SURFACES.station }));
   const stationBusyMat = tracker.material(new MeshLambertMaterial({ color: SURFACES.stationBusy, emissive: SURFACES.stationBusy, emissiveIntensity: 0.35 }));
   const entranceMat = tracker.material(new MeshLambertMaterial({ color: SURFACES.entrance }));
-  const ceilingMat = tracker.material(new MeshLambertMaterial({ color: SURFACES.ceilingStrip, emissive: 0x000000 }));
+  // Translucent and not depth-writing: the camera often sits above the (roofless) ceiling, so the
+  // strips cross every interior view and must read as fixtures, not bars that hide the racks.
+  const ceilingMat = tracker.material(new MeshLambertMaterial({ color: SURFACES.ceilingStrip, emissive: 0x000000, transparent: true, opacity: 0.55, depthWrite: false }));
   const doorMats = {
     inbound: tracker.material(new MeshLambertMaterial({ color: DOOR_COLORS.inbound })),
     outbound: tracker.material(new MeshLambertMaterial({ color: DOOR_COLORS.outbound })),
@@ -493,7 +497,7 @@ export function buildBuilding(spec: LayoutSpec, layout: Layout, world: World, op
 
   // Ceiling light strips every 30 ft.
   const stripBatch = new BoxBatch();
-  for (let y = 15; y < D - 5; y += 30) stripBatch.add(Math.max(10, W - 10), 0.3, 1.5, W / 2, CEILING_HEIGHT, -y);
+  for (let y = 15; y < D - 5; y += 30) stripBatch.add(Math.max(10, W - 10), 0.25, 0.8, W / 2, CEILING_HEIGHT, -y);
   const ceilingStrips = new Mesh(tracker.geometry(stripBatch.build()), ceilingMat);
   ceilingStrips.name = "ceilingStrips";
   group.add(ceilingStrips);

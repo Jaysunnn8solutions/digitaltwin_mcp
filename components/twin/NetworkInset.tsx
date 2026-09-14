@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type KeyboardEvent } from "react";
 import type { Playback, WorldPayload } from "@/lib/trace/types";
 import { WEEKDAYS } from "@/lib/twin/standards";
 import type { EventIndex, OrderRecord } from "@/lib/twin-ui/describe";
@@ -19,6 +19,13 @@ const H = 250;
 const MAP_W = 200;
 
 type StoreStatus = { text: string; cls: string };
+
+/** Keyboard activation for an element that acts as a button. */
+export function enterOrSpace(e: KeyboardEvent, action: () => void): void {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  action();
+}
 
 /** Today's status of a store's order from the events at or before t. */
 export function storeStatusAt(index: EventIndex, storeId: string, t: number): StoreStatus {
@@ -149,8 +156,18 @@ export default function NetworkInset({ world, playback, index, t, onSelect }: Pr
               {pos.slice(0, 2).map((p, k) => {
                 const yy = y + 10 + k * 4;
                 const entity = truckEntity(p.po);
+                const pick = entity >= 0 ? () => onSelect(entity) : undefined;
                 return (
-                  <g key={p.po} onClick={entity >= 0 ? () => onSelect(entity) : undefined} style={{ cursor: entity >= 0 ? "pointer" : "default" }}>
+                  // A bar with a truck behind it is a button a keyboard can reach: Enter or Space selects the truck like a click.
+                  <g
+                    key={p.po}
+                    role={pick ? "button" : undefined}
+                    tabIndex={pick ? 0 : undefined}
+                    aria-label={pick ? `${p.po} from ${sp.name}: ${p.label}. Select the truck` : undefined}
+                    onClick={pick}
+                    onKeyDown={pick ? (e) => enterOrSpace(e, pick) : undefined}
+                    style={{ cursor: entity >= 0 ? "pointer" : "default" }}
+                  >
                     <title>{`${p.po}: ${p.label}`}</title>
                     <rect x={barX} y={yy} width={barW} height={3} fill="var(--line)" />
                     <rect x={barX} y={yy} width={(barW * Math.max(0, p.stage + 1)) / 6} height={3} fill={p.stage >= 5 ? "#2f9e44" : p.stage >= 2 ? "#1c7ed6" : "#f08c00"} />

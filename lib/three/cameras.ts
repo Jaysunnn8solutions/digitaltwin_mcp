@@ -79,48 +79,122 @@ function unit(v: [number, number, number]): [number, number, number] {
   return [v[0] / n, v[1] / n, v[2] / n];
 }
 
-/**
- * The camera distance along `back` from the box centre at which every
- * corner projects inside `fill` of a frustum with vertical `fovDeg` and
- * `aspect`. Exact: for each corner, the distance that puts it on the
- * frustum edge is its lateral offset over the tangent, less its depth.
- */
-export function fitDistance(box: StageBox, back: [number, number, number], fovDeg: number, aspect: number, fill = PRESET_FILL): number {
-  const b = unit(back);
-  toWorld(b[0], b[1], b[2], _back);
-  // Camera basis: forward = -back, right = forward × up, up = right × forward.
+/** Corner support along the four frustum side-plane normals, and the range of the box along the two screen axes. */
+interface Support {
+  right: number;
+  left: number;
+  top: number;
+  bottom: number;
+}
+
+function eachCorner(box: StageBox, fn: (c: Vector3) => void): void {
+  for (const x of [box.x0, box.x1]) {
+    for (const y of [box.y0, box.y1]) {
+      for (const z of [box.z0, box.z1]) fn(toWorld(x, y, z, _corner));
+    }
+  }
+}
+
+/** Camera basis for a view direction: forward = -back, right = forward × up, up = right × forward. Writes _back, _fwd, _right, _up. */
+function basis(back: [number, number, number]): void {
+  toWorld(back[0], back[1], back[2], _back);
   _fwd.copy(_back).negate();
   _right.crossVectors(_fwd, WORLD_UP);
   if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
   _right.normalize();
   _up.crossVectors(_right, _fwd).normalize();
-  toWorld((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, (box.z0 + box.z1) / 2, _centre);
-  const tanV = Math.tan((fovDeg * Math.PI) / 360) * fill;
-  const tanH = tanV * Math.max(0.05, aspect);
-  let d = 0;
-  for (const x of [box.x0, box.x1]) {
-    for (const y of [box.y0, box.y1]) {
-      for (const z of [box.z0, box.z1]) {
-        toWorld(x, y, z, _corner).sub(_centre);
-        const depth = -_corner.dot(_back);
-        const lateral = Math.abs(_corner.dot(_right));
-        const vertical = Math.abs(_corner.dot(_up));
-        d = Math.max(d, lateral / tanH - depth, vertical / tanV - depth);
-      }
-    }
-  }
-  return d;
 }
 
-/** Camera position and orbit target for a preset at the given fov and aspect. */
+/**
+ * The camera offset along `axis` at which the box's screen extent along that
+ * axis is centred, given the camera's forward offset `fp`: a corner's screen
+ * coordinate is (axis·c − a) / ((fwd·c − fp) k), linear and decreasing in a,
+ * so the sum of the extreme coordinates has one root, found by bisection.
+ */
+function centreAlong(box: StageBox, axis: Vector3, fp: number, k: number): number {
+  let lo = Infinity;
+  let hi = -Infinity;
+  eachCorner(box, (c) => {
+    const s = c.dot(axis);
+    lo = Math.min(lo, s);
+    hi = Math.max(hi, s);
+  });
+  for (let i = 0; i < 48; i++) {
+    const a = (lo + hi) / 2;
+    let min = Infinity;
+    let max = -Infinity;
+    eachCorner(box, (c) => {
+      const s = (c.dot(axis) - a) / (Math.max(1e-6, c.dot(_fwd) - fp) * k);
+      min = Math.min(min, s);
+      max = Math.max(max, s);
+    });
+    if (max + min > 0) lo = a;
+    else hi = a;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * The distance from the camera to a box's centre along `back` after fitting,
+ * for a frustum with vertical `fovDeg` and `aspect`: the same fit as fitView,
+ * exposed for callers that only want a number.
+ */
+export function fitDistance(box: StageBox, back: [number, number, number], fovDeg: number, aspect: number, fill = PRESET_FILL): number {
+  const v = fitView({ box, back, fill }, fovDeg, aspect);
+  toWorld((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, (box.z0 + box.z1) / 2, _centre);
+  return v.pos.distanceTo(_centre);
+}
+
+/**
+ * Camera position and orbit target for a preset at the given fov and aspect.
+ *
+ * Exact frustum fit with the view direction fixed: each side plane of the
+ * `fill`-scaled frustum passes through the camera with normal r − kH·f (right),
+ * −r − kH·f (left), u − kV·f (top), −u − kV·f (bottom), and the box is inside
+ * when the plane's support of the box equals its value at the camera. The
+ * left/right pair fixes the camera's forward offset once, the top/bottom pair
+ * fixes it again; the smaller (farther back) wins, that pair is then tight on
+ * both sides, so the box touches the fill and is centred on that axis, and
+ * the other axis is centred by centreAlong. Bounding the corners about the
+ * box centre instead would leave the top of an elevated three-quarter view
+ * empty, because the near corners project far below the centre and the far
+ * ones bunch up near it. minHeight pushes the camera back along `back` when
+ * the fitted position would sit too low; the orbit target is the point on the
+ * view ray nearest the box centre.
+ */
 export function fitView(spec: PresetSpec, fovDeg: number, aspect: number): PresetView {
   const back = unit(spec.back);
   const box = spec.box;
-  let d = fitDistance(box, back, fovDeg, aspect, spec.fill ?? PRESET_FILL);
-  const cz = (box.z0 + box.z1) / 2;
-  if (spec.minHeight !== undefined && back[2] > 1e-6) d = Math.max(d, (spec.minHeight - cz) / back[2]);
-  const target = toWorld((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, cz);
-  const pos = toWorld((box.x0 + box.x1) / 2 + back[0] * d, (box.y0 + box.y1) / 2 + back[1] * d, cz + back[2] * d);
+  const fill = spec.fill ?? PRESET_FILL;
+  basis(back);
+  const kV = Math.tan((fovDeg * Math.PI) / 360) * fill;
+  const kH = kV * Math.max(0.05, aspect);
+  const m: Support = { right: -Infinity, left: -Infinity, top: -Infinity, bottom: -Infinity };
+  eachCorner(box, (c) => {
+    const r = c.dot(_right);
+    const u = c.dot(_up);
+    const f = c.dot(_fwd);
+    m.right = Math.max(m.right, r - kH * f);
+    m.left = Math.max(m.left, -r - kH * f);
+    m.top = Math.max(m.top, u - kV * f);
+    m.bottom = Math.max(m.bottom, -u - kV * f);
+  });
+  const fpH = -(m.right + m.left) / (2 * kH);
+  const fpV = -(m.top + m.bottom) / (2 * kV);
+  const fp = Math.min(fpH, fpV);
+  let rp: number;
+  let up: number;
+  if (fpH <= fpV) {
+    rp = (m.right - m.left) / 2;
+    up = centreAlong(box, _up, fp, kV);
+  } else {
+    up = (m.top - m.bottom) / 2;
+    rp = centreAlong(box, _right, fp, kH);
+  }
+  const pos = new Vector3().addScaledVector(_right, rp).addScaledVector(_up, up).addScaledVector(_fwd, fp);
+  if (spec.minHeight !== undefined && _back.y > 1e-6 && pos.y < spec.minHeight) pos.addScaledVector(_back, (spec.minHeight - pos.y) / _back.y);
+  toWorld((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, (box.z0 + box.z1) / 2, _centre);
+  const target = pos.clone().addScaledVector(_fwd, Math.max(1, _centre.sub(pos).dot(_fwd)));
   return { pos, target };
 }
 
@@ -172,10 +246,13 @@ export function presetSpecs(layout: Layout, world: World): Record<CameraPreset, 
   const pickTop = topOf(layout.pickAisles, 6, 2, 8);
   const reserveTop = topOf(layout.reserveAisles, 15, 5, 12);
   return {
-    // Three-quarter aerial from the dock side: the whole building and the yard road.
-    overview: { box: { x0: 0, x1: W, y0: roadY - 20, y1: D, z0: 0, z1: WALL_TOP }, back: [-0.42, -0.62, 0.66] },
-    // Low along the dock wall from the yard, the inbound end nearest.
-    dock: { box: { x0: 0, x1: W, y0: -70, y1: 12, z0: 0, z1: WALL_TOP }, back: [-0.62, -0.76, 0.2], fill: 0.9, minHeight: 18 },
+    // Three-quarter aerial from the dock side: the whole building and the yard road. A 30°-ish
+    // elevation keeps the box's projection wider than it is tall, so the width binds on a
+    // landscape viewport and the building fills it instead of floating in a tall empty frame.
+    overview: { box: { x0: 0, x1: W, y0: roadY - 10, y1: D, z0: 0, z1: WALL_TOP }, back: [-0.45, -0.66, 0.55], fill: 0.9 },
+    // Along the dock wall from beyond its inbound end, low enough that trucks and doors are the
+    // subject but high enough that the horizon stays in the top third and the racks show over the wall.
+    dock: { box: { x0: -10, x1: W, y0: -80, y1: 15, z0: 0, z1: WALL_TOP }, back: [-0.74, -0.56, 0.38], fill: 0.9, minHeight: 20 },
     // In front of the pick module at head height, looking down the aisles.
     pick: { box: { x0: pick.x0, x1: pick.x1, y0: pick.y0, y1: pick.y1, z0: 0, z1: pickTop }, back: [-0.12, -0.72, 0.68], minHeight: 12 },
     // Over the reserve block from its front corner.
@@ -216,8 +293,8 @@ export class CameraRig {
   private static defaultSpecs(): Record<CameraPreset, PresetSpec> {
     const b: StageBox = { x0: 0, x1: 200, y0: -80, y1: 200, z0: 0, z1: WALL_TOP };
     return {
-      overview: { box: b, back: [-0.42, -0.62, 0.66] },
-      dock: { box: { ...b, y0: -70, y1: 12 }, back: [-0.62, -0.76, 0.2], minHeight: 18 },
+      overview: { box: b, back: [-0.45, -0.66, 0.55], fill: 0.9 },
+      dock: { box: { ...b, x0: -10, y0: -80, y1: 15 }, back: [-0.74, -0.56, 0.38], fill: 0.9, minHeight: 20 },
       pick: { box: { x0: 70, x1: 130, y0: 70, y1: 150, z0: 0, z1: 8 }, back: [-0.12, -0.72, 0.68], minHeight: 12 },
       reserve: { box: { x0: 20, x1: 80, y0: 70, y1: 160, z0: 0, z1: 20 }, back: [-0.45, -0.6, 0.66] },
       yard: { box: { ...b, y0: -160, y1: 6 }, back: [0.1, -0.8, 0.6] },

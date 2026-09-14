@@ -74,6 +74,7 @@ export default function Hud({ world, playback, index, snapshot, t, expanded, onT
   const all = tiles(kpis, running);
 
   const today = useMemo(() => {
+    const supplierName = new Map(world.suppliers.map((s) => [s.id, s.name]));
     const stores = world.stores
       .filter((s) => s.deliveryDays.includes((day % 7) + 1))
       .map((s) => {
@@ -87,11 +88,12 @@ export default function Hud({ world, playback, index, snapshot, t, expanded, onT
         }
         return { id: s.id, name: s.name, status, entity };
       });
-    const trucks: Array<{ po: string; supplier: string; eta: number; label: string; stage: number; entity: number }> = [];
+    const trucks: Array<{ po: string; supplier: string; supplierName: string; eta: number; label: string; stage: number; entity: number }> = [];
     for (const [po, r] of index.po) {
       if (!r.scheduled || dayOf(r.scheduled.eta) !== day || r.scheduled.t > t) continue;
       const stage = poStageAt(index, po, t);
-      trucks.push({ po, supplier: r.scheduled.supplier, eta: r.scheduled.eta, label: stage.label, stage: stage.stage, entity: playback.entities.findIndex((e) => e.kind === "truckIn" && e.id === po) });
+      // The supplier's name, as the floor knows the truck; the id stays in the tooltip.
+      trucks.push({ po, supplier: r.scheduled.supplier, supplierName: supplierName.get(r.scheduled.supplier) ?? r.scheduled.supplier, eta: r.scheduled.eta, label: stage.label, stage: stage.stage, entity: playback.entities.findIndex((e) => e.kind === "truckIn" && e.id === po) });
     }
     trucks.sort((a, b) => a.eta - b.eta);
     return { stores, trucks };
@@ -161,20 +163,20 @@ export default function Hud({ world, playback, index, snapshot, t, expanded, onT
           <div className="twin-today">
             {today.stores.length === 0 && <span className="sub">No store trucks due today.</span>}
             {today.stores.map((s) => (
-              <div className="row" key={s.id} onClick={s.entity >= 0 ? () => onSelectEntity(s.entity) : undefined} style={{ cursor: s.entity >= 0 ? "pointer" : "default" }}>
+              <button type="button" className="row" key={s.id} onClick={() => onSelectEntity(s.entity)} disabled={s.entity < 0} title={s.entity >= 0 ? `Select the ${s.name} truck` : undefined}>
                 <span className="name" title={s.name}>
                   {s.name}
                 </span>
                 <span className={`twin-status ${s.status.cls}`}>{s.status.text}</span>
-              </div>
+              </button>
             ))}
             {today.trucks.map((tr) => (
-              <div className="row" key={tr.po} onClick={tr.entity >= 0 ? () => onSelectEntity(tr.entity) : undefined} style={{ cursor: tr.entity >= 0 ? "pointer" : "default" }}>
-                <span className="name" title={`${tr.po} from ${tr.supplier}`}>
-                  ▲ {tr.supplier}
+              <button type="button" className="row" key={tr.po} onClick={() => onSelectEntity(tr.entity)} disabled={tr.entity < 0} title={`${tr.po} from ${tr.supplier}${tr.entity >= 0 ? ": select the truck" : ""}`}>
+                <span className="name" title={`${tr.po} from ${tr.supplierName}`}>
+                  ▲ {tr.supplierName}
                 </span>
                 <span className={`twin-status ${tr.stage >= 5 ? "good" : tr.stage >= 2 ? "on" : ""}`}>{tr.stage >= 2 ? tr.label : `ETA ${clockOf(tr.eta)}`}</span>
-              </div>
+              </button>
             ))}
             {today.stores.length > 0 && today.trucks.length === 0 && <span className="sub">No supplier trucks today.</span>}
           </div>

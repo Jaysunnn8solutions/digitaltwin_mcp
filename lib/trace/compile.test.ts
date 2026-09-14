@@ -13,9 +13,9 @@ import { runOperations, type OperationsResult } from "../twin/operations";
 import { DEFAULT_STANDARDS } from "../twin/standards";
 import { buildTwin, operationsOptions, type TwinScenario } from "../twin/twin";
 import { loadCatalog, loadRoster } from "../data/store";
-import { collectBuffers, compilePlayback, YARD_FT_PER_MIN } from "./compile";
+import { collectBuffers, compilePlayback, CsrBuilder, PalletBuilder, rowInsertIndex, YARD_FT_PER_MIN } from "./compile";
 import { buildFixture, skuInfos, workerInfos } from "./fixtures";
-import { ActorState, DirtyKind, LANE_SLOTS, RecordingTracer, SegKind, type DoorFrame, type Playback, type SkuInfo, type TraceEvent, type TraceInit, type Track, type WorkerInfo } from "./types";
+import { ActorState, DirtyKind, LANE_SLOTS, PalletAt, RecordingTracer, SegKind, type DoorFrame, type Playback, type SkuInfo, type SupplierInfo, type TraceEvent, type TraceInit, type Track, type WorkerInfo } from "./types";
 import { buildWorld } from "./world";
 
 interface Case {
@@ -49,9 +49,9 @@ async function liveCases(): Promise<Case[]> {
   return [await record("dc-west", "dc-west", 7, 5), await record("dc-east", "dc-east", 7, 5), await record("csv", "dc-east", 5, 5, { layout: csv.spec })];
 }
 
-function compile(c: Case, offsets = true, keepEvents = true): Playback {
+function compile(c: Case, offsets = true, keepEvents = true, suppliers?: SupplierInfo[]): Playback {
   const world = buildWorld(c.layout, c.workers);
-  return compilePlayback({ events: c.events, layout: c.layout, world, skus: c.skus, slotting: c.slotting, opts: { offsets, keepEvents } });
+  return compilePlayback({ events: c.events, layout: c.layout, world, skus: c.skus, slotting: c.slotting, suppliers, opts: { offsets, keepEvents } });
 }
 
 const MOVING = new Set<number>([SegKind.Walk, SegKind.WalkCart, SegKind.Drive, SegKind.DriveLoaded, SegKind.Transfer, SegKind.IdleReturn, SegKind.Yard]);
@@ -145,18 +145,42 @@ function checkPlayback(c: Case, pb: Playback) {
       add(laneUse, `${pb.pallets.ref[r]}/${pb.pallets.slot[r]}`, pb.pallets.t[r], until, pb.entities.filter((x) => x.kind === "pallet")[i].id);
     }
   }
-  // A lane spot is exclusive until the lane is full; past LANE_SLOTS pallets the overflow stacks on spot mod 8 by design.
+  // The pallet timeline keeps the raw lane index (past LANE_SLOTS pallets the overflow is a tier on spot mod LANE_SLOTS), so every door/index key is exclusive.
+  noOverlap("lane spot", laneUse);
+  // The spot timeline agrees with the pallets: an item is occupied exactly while some pallet's row puts it on that spot (raw index mod LANE_SLOTS).
+  const laneItems = new Map<number, Array<[number, number]>>();
   for (const [key, list] of laneUse) {
-    const door = key.split("/")[0];
-    const laneAll = [...laneUse].filter(([k]) => k.split("/")[0] === door).flatMap(([, l]) => l);
-    const sorted = [...list].sort((p, q) => p[0] - q[0]);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i][0] >= sorted[i - 1][1] - 1e-9) continue;
-      const t = sorted[i][0];
-      const occupied = laneAll.filter(([a, b]) => a <= t && t < b).length;
-      if (occupied <= LANE_SLOTS) throw new Error(`${c.name}: lane spot ${key} double-booked with only ${occupied} pallets in the lane: ${sorted[i - 1][2]} [${sorted[i - 1][0]}, ${sorted[i - 1][1]}) and ${sorted[i][2]} from ${t}`);
+    const [door, slot] = key.split("/").map(Number);
+    const item = door * LANE_SLOTS + (slot % LANE_SLOTS);
+    const cur = laneItems.get(item) ?? [];
+    for (const [a, b] of list) cur.push([a, b]);
+    laneItems.set(item, cur);
+  }
+  for (let item = 0; item + 1 < pb.laneSlots.offsets.length; item++) {
+    const spans = laneItems.get(item) ?? [];
+    for (let r = pb.laneSlots.offsets[item]; r < pb.laneSlots.offsets[item + 1]; r++) {
+      const t = pb.laneSlots.t[r];
+      const busy = pb.laneSlots.v[r] >= 0;
+      const held = spans.some(([a, b]) => a - 1e-9 <= t && t < b - 1e-9);
+      // A load frees the spot at its start while the pallet leaves at the pickup a moment later: a free row may precede the pallet's departure, never the other way round.
+      if (busy && !held) throw new Error(`${c.name}: lane item ${item} says pallet ${pb.laneSlots.v[r]} at ${t} but no pallet row covers that minute`);
     }
   }
+  // Every CSR item and pallet timeline is in time order: a job start writes future rows (a pallet lands at the drop), so the builders place rows by time, not by call order.
+  const monotone = (name: string, tl: { offsets: Int32Array; t: Float64Array }) => {
+    for (let i = 0; i + 1 < tl.offsets.length; i++) {
+      for (let r = tl.offsets[i] + 1; r < tl.offsets[i + 1]; r++) if (!(tl.t[r] > tl.t[r - 1])) throw new Error(`${c.name}: ${name} item ${i} row ${r} at ${tl.t[r]} after ${tl.t[r - 1]}`);
+    }
+  };
+  monotone("faces", pb.faces);
+  monotone("faceHot", pb.faceHot);
+  monotone("reserveSlots", pb.reserveSlots);
+  monotone("reserveSku", pb.reserveSku);
+  monotone("reserveInners", pb.reserveInners);
+  monotone("doors", pb.doors);
+  monotone("laneSlots", pb.laneSlots);
+  monotone("stations", pb.stations);
+  monotone("pallets", pb.pallets);
   for (let i = 0; i + 1 < pb.reserveSku.offsets.length; i++) {
     for (let r = pb.reserveSku.offsets[i]; r < pb.reserveSku.offsets[i + 1]; r++) {
       const v = pb.reserveSku.v[r];
@@ -368,6 +392,124 @@ describe("compilePlayback on the fixture", () => {
   });
 });
 
+describe("timeline builders", () => {
+  it("places a row by time when a later call carries an earlier minute, keeping neighbours distinct", () => {
+    expect(rowInsertIndex([{ t: 0 }, { t: 5 }, { t: 9 }], 7)).toBe(2);
+    expect(rowInsertIndex([{ t: 0 }, { t: 5 }], 5)).toBe(2);
+    const b = new CsrBuilder(1, () => -1);
+    // A load frees the spot at a future pickup minute, then a pack lands on it before that minute.
+    b.set(0, 10, 7, 1);
+    b.set(0, 30, -1, 2);
+    b.set(0, 20, 9, 3);
+    expect(b.items[0].map((r) => [r.t, r.v])).toEqual([
+      [0, -1],
+      [10, 7],
+      [20, 9],
+      [30, -1],
+    ]);
+    // A no-op value at the same minute collapses back into its predecessor; a duplicate next row is dropped.
+    b.set(0, 20, 7, 4);
+    expect(b.items[0].map((r) => [r.t, r.v])).toEqual([
+      [0, -1],
+      [10, 7],
+      [30, -1],
+    ]);
+    b.set(0, 25, -1, 5);
+    expect(b.items[0].map((r) => [r.t, r.v])).toEqual([
+      [0, -1],
+      [10, 7],
+      [25, -1],
+    ]);
+    const p = new PalletBuilder();
+    const i = p.add();
+    p.set(i, 40, PalletAt.Jack, 3, -1, 1);
+    p.set(i, 20, PalletAt.StagingLane, 1, 9, 2);
+    expect(p.items[i].map((r) => [r.t, r.at, r.slot])).toEqual([
+      [0, PalletAt.Unborn, -1],
+      [20, PalletAt.StagingLane, 9],
+      [40, PalletAt.Jack, -1],
+    ]);
+    for (const rows of [b.items[0], p.items[i]]) for (let k = 1; k < rows.length; k++) expect(rows[k].t).toBeGreaterThan(rows[k - 1].t);
+  });
+});
+
+describe("names and severities on the fixture", () => {
+  it("labels supplier trucks and ticker lines by the supplier's name, keeping the PO id in parentheses and the meta", async () => {
+    const c = await fixtureCase();
+    const suppliers: SupplierInfo[] = c.skus.slice(0, 1).map((s) => ({ id: s.supplier, name: "Chocolate Works", kind: "domestic", leadDays: 5, leadSdDays: 1, orderDay: 1 }));
+    const pb = compile(c, true, true, suppliers);
+    const trucks = pb.entities.filter((e) => e.kind === "truckIn");
+    expect(trucks.length).toBe(2);
+    const named = trucks.find((e) => e.meta.supplier === suppliers[0].id)!;
+    expect(named.label).toBe("Chocolate Works truck");
+    expect(named.meta.supplier).toBe(suppliers[0].id);
+    const arrive = pb.ticker.find((l) => l.kind === "truckArrive" && l.entity === pb.entities.indexOf(named))!;
+    expect(arrive.text).toMatch(/^Chocolate Works truck \(PO-dc-west-1\) arrives with 2 pallets\.$/);
+    expect(pb.ticker.find((l) => l.kind === "truckDock" && l.entity === pb.entities.indexOf(named))!.text).toMatch(/^Chocolate Works truck \(PO-dc-west-1\) docks/);
+    expect(pb.ticker.find((l) => l.kind === "truckUndock" && l.entity === pb.entities.indexOf(named))!.text).toBe("Chocolate Works truck (PO-dc-west-1) is unloaded and leaves the door.");
+    // An unknown supplier keeps its id; no line uses a bare PO as the subject.
+    const other = trucks.find((e) => e !== named)!;
+    expect(other.label).toBe(`${other.meta.supplier} truck`);
+    for (const l of pb.ticker) if (l.kind === "truckDock" || l.kind === "truckUndock") expect(l.text).not.toMatch(/^PO-/);
+    // Outbound lines use the store name recorded at the order's release.
+    const stores = new Set(c.events.filter((e): e is Extract<TraceEvent, { k: "orderRelease" }> => e.k === "orderRelease").map((e) => e.storeName));
+    for (const l of pb.ticker) {
+      if (l.kind !== "truckDepart" && l.kind !== "orderPicked") continue;
+      expect([...stores].some((s) => l.text.startsWith(s)), l.text).toBe(true);
+    }
+    const clockIn = pb.ticker.find((l) => l.kind === "worker" && l.text.includes("clocks in"))!;
+    expect(clockIn.text).toMatch(/clocks in for the \S+ shift as \S+\.$/);
+  });
+
+  it("rates a hot face short as notable, not a fault, and lists one WMS line per outage", async () => {
+    const c = await fixtureCase();
+    const pb = compile(c);
+    const shorts = pb.ticker.filter((l) => l.kind === "short");
+    expect(shorts.length).toBeGreaterThan(0);
+    const hotEvents = c.events.filter((e): e is Extract<TraceEvent, { k: "short" }> => e.k === "short" && e.hot);
+    expect(hotEvents.length).toBeGreaterThan(0);
+    for (const l of shorts) {
+      const e = pb.events[l.ev];
+      expect(e.k).toBe("short");
+      if (e.k === "short") expect(l.severity).toBe(e.hot ? 1 : 2);
+    }
+    expect(pb.ticker.filter((l) => l.kind === "shortShip").every((l) => l.severity === 2)).toBe(true);
+    // Overlapping WMS windows make the engine note `down` twice while still down: the ticker keeps the first.
+    const down = c.events.findIndex((e) => e.k === "wms" && e.down);
+    expect(down).toBeGreaterThan(0);
+    const dup = [...c.events];
+    const first = dup[down] as Extract<TraceEvent, { k: "wms" }>;
+    dup.splice(down + 1, 0, { k: "wms", t: first.t + 1, down: true, until: (first.until ?? first.t) + 30 });
+    const pb2 = compile({ ...c, events: dup });
+    expect(pb2.ticker.filter((l) => l.kind === "wms").map((l) => l.text.startsWith("WMS down"))).toEqual([true, false]);
+  });
+});
+
+describe.skipIf(!live)("door outages on a real recording", () => {
+  it("takes the last inbound door out for the window, shows it as -2 and docks nothing there", async () => {
+    const c = await record("outage", "dc-east", 7, 5, { doorOutages: [{ kind: "inbound", count: 1, fromDay: 2, toDay: 4 }] });
+    const pb = compile(c);
+    checkPlayback(c, pb);
+    const inbound = pb.world.frames.filter((f) => f.kind === "inbound");
+    const out = inbound[inbound.length - 1].index;
+    const rows: Array<[number, number]> = [];
+    for (let r = pb.doors.offsets[out]; r < pb.doors.offsets[out + 1]; r++) rows.push([pb.doors.t[r], pb.doors.v[r]]);
+    const from = 2 * 1440;
+    const to = 5 * 1440;
+    expect(rows.some(([t, v]) => v === -2 && t >= from && t < from + 1440)).toBe(true);
+    expect(rows.some(([t, v]) => v === -1 && Math.abs(t - to) < 1e-9)).toBe(true);
+    for (const [t, v] of rows) if (t >= from - 1e-9 && t < to - 1e-9) expect(v, `door ${out} at ${t}`).toBeLessThan(0);
+    // The other inbound doors never show the outage value.
+    for (const f of inbound) {
+      if (f.index === out) continue;
+      for (let r = pb.doors.offsets[f.index]; r < pb.doors.offsets[f.index + 1]; r++) expect(pb.doors.v[r]).not.toBe(-2);
+    }
+    // Trucks docked during the window (the engine has one door fewer) landed elsewhere.
+    const docks = c.events.filter((e): e is Extract<TraceEvent, { k: "truckDock" }> => e.k === "truckDock" && e.t >= from && e.t < to);
+    expect(docks.length).toBeGreaterThan(0);
+  }, 120_000);
+});
+
 describe.skipIf(!live)("compilePlayback on real recordings", () => {
   it("passes the invariants on both built-ins and the CSV sample, with no fast job", async () => {
     for (const c of await liveCases()) {
@@ -382,6 +524,16 @@ describe.skipIf(!live)("compilePlayback on real recordings", () => {
       for (const j of exact) expect(j.speedRatio).toBeCloseTo(1, 6);
       expect(offs.jobs.filter((j) => j.fit === "fast").length).toBe(0);
     }
+  }, 120_000);
+
+  it("keeps lane tiers apart when a dock lane overflows (outages plus absenteeism on dc-west)", async () => {
+    // The scenario that stacks 20+ pallets in one dock lane: one forklift and one inbound door out on days 1-2 with a fifth of the crew absent.
+    const c = await record("stressed", "dc-west", 14, 4, { forkliftOutages: [{ count: 1, fromDay: 1, toDay: 2 }], absenteeism: 0.2, doorOutages: [{ kind: "inbound", count: 1, fromDay: 1, toDay: 2 }] });
+    const pb = compile(c);
+    checkPlayback(c, pb);
+    let overflow = 0;
+    for (let r = 0; r < pb.pallets.t.length; r++) if ((pb.pallets.at[r] === PalletAt.DockLane || pb.pallets.at[r] === PalletAt.StagingLane) && pb.pallets.slot[r] >= LANE_SLOTS) overflow++;
+    expect(overflow, "the recording has overflow tiers to check").toBeGreaterThan(0);
   }, 120_000);
 
   it("is deterministic on a real recording", async () => {

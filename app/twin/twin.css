@@ -14,6 +14,10 @@
   --twin-bad: #e03131;
   --twin-warn: #f08c00;
   --twin-info: #1c7ed6;
+  /* Text-safe darks of warn and info (4.6:1 and 5.9:1 on white): wherever the colour carries text or sits under white text.
+     The bright pair stays for bars, bands and borders. */
+  --twin-warn-text: #b35c00;
+  --twin-info-text: #1864ab;
   --twin-quiet: rgba(120, 120, 110, 0.14);
   --twin-shift: rgba(28, 126, 214, 0.1);
   --twin-playhead: #d9480f;
@@ -25,6 +29,9 @@
     --twin-stage: #15171b;
     --twin-overlay: rgba(30, 30, 28, 0.88);
     --twin-overlay-line: rgba(236, 235, 230, 0.14);
+    /* On the dark overlay the bright orange is 6.7:1 and the blue under white text reads; keep them. */
+    --twin-warn-text: #f08c00;
+    --twin-info-text: #1c7ed6;
     --twin-quiet: rgba(160, 160, 150, 0.12);
     --twin-shift: rgba(77, 171, 247, 0.12);
   }
@@ -113,6 +120,11 @@ main.twin-main {
   color: var(--accent);
 }
 
+.twin-chip.edited {
+  border-style: dashed;
+  color: var(--muted);
+}
+
 .twin-progress {
   width: 140px;
   height: 6px;
@@ -175,7 +187,18 @@ main.twin-main {
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+/* The canvas is in the tab order (the keyboard map works from it): a visible ring when Tab lands on it, none after a click. */
+.twin-stage canvas:focus:not(:focus-visible) {
   outline: none;
+}
+
+.twin-stage canvas:focus-visible,
+.twin-minimap .wrap:focus-visible,
+.twin-network g[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .twin-stage-inner.walking canvas {
@@ -208,14 +231,14 @@ main.twin-main {
 }
 
 .twin-label.queue {
-  background: var(--twin-info);
+  background: var(--twin-info-text);
   color: #fff;
   border-color: transparent;
   font-weight: 600;
 }
 
 .twin-label.badge {
-  background: var(--twin-warn);
+  background: var(--twin-warn-text);
   color: #fff;
   border-color: transparent;
 }
@@ -259,8 +282,12 @@ main.twin-main {
   z-index: 3;
 }
 
+/* The row wraps rather than shrinks: the toolbar stays on one line and the
+   clock drops under it when the stage is too narrow for both (under about
+   840 px, a 1000 px window), instead of the two overlapping. */
 .twin-ovl-row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--twin-gap);
   align-items: flex-start;
   width: 100%;
@@ -287,8 +314,9 @@ main.twin-main {
   align-items: flex-start;
 }
 
+/* A fixed basis, not the content's: a toast wraps inside it instead of widening the column and bumping the clock onto the next line. */
 .twin-ovl-col.right {
-  flex: 0 1 auto;
+  flex: 0 1 230px;
   align-items: flex-end;
   margin-left: auto;
 }
@@ -407,7 +435,7 @@ main.twin-main {
   padding: 6px 12px;
   border-left: 3px solid var(--accent);
   animation: twin-fade 300ms ease-out;
-  max-width: 340px;
+  max-width: 100%;
 }
 
 /* ---------- HUD: headline strip, everything behind More ---------- */
@@ -557,7 +585,7 @@ main.twin-main {
 }
 
 .twin-tile.warn b {
-  color: var(--twin-warn);
+  color: var(--twin-warn-text);
 }
 
 .twin-queues {
@@ -617,11 +645,31 @@ main.twin-main {
   overflow: auto;
 }
 
+/* Each row is a button (a keyboard reaches the truck it selects); one without a truck is disabled and looks like plain text. */
 .twin-today .row {
   margin: 0;
   gap: 4px 6px;
   align-items: center;
   flex-wrap: nowrap;
+  display: flex;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.twin-today .row:hover:not(:disabled) .name {
+  color: var(--accent);
+}
+
+.twin-today .row:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .twin-today .name {
@@ -643,7 +691,7 @@ main.twin-main {
 }
 
 .twin-status.on {
-  background: var(--twin-info);
+  background: var(--twin-info-text);
   color: #fff;
 }
 
@@ -658,7 +706,7 @@ main.twin-main {
 }
 
 .twin-status.warn {
-  background: var(--twin-warn);
+  background: var(--twin-warn-text);
   color: #fff;
 }
 
@@ -677,15 +725,24 @@ main.twin-main {
   gap: 2px;
 }
 
-.twin-ticker li {
+/* Each line is a button (Tab reaches it, Enter selects or seeks) drawn as the row it used to be. */
+.twin-ticker li > button {
   display: flex;
   gap: 6px;
   align-items: baseline;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
   line-height: 1.3;
 }
 
-.twin-ticker li:hover {
+.twin-ticker li > button:hover {
   color: var(--accent);
 }
 
@@ -1075,6 +1132,12 @@ main.twin-main {
   width: 64px;
 }
 
+.twin-runbtns {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .twin-drop {
   border: 1.5px dashed var(--line);
   border-radius: 8px;
@@ -1410,6 +1473,13 @@ main.twin-main {
 @media (min-width: 1000px) and (max-height: 760px) {
   .twin-ticker li:nth-child(n + 4) {
     display: none;
+  }
+}
+
+/* Shorter still (a 600 px window): a smaller minimap gives the floor back its bottom-right corner. */
+@media (min-width: 1000px) and (max-height: 640px) {
+  .twin-minimap {
+    width: 170px;
   }
 }
 

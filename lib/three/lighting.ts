@@ -37,6 +37,13 @@ export const STRIPS_AFTER_LAST_OUT_MIN = 30;
 export const STRIPS_OFF_DEFAULT_MIN = 22 * 60;
 /** Light the strips hold on an up-facing surface (sum of interior, the sky's share and the sun's vertical component). */
 export const FLOOR_LIGHT_TARGET = 1.05;
+/**
+ * three r155+ feeds a light's bare intensity to the shader and Lambert's
+ * BRDF divides by π, so intensity 1 lights an up-facing surface to only 1/π
+ * of its albedo. lightLevels works in floor units (1 = the surface shows its
+ * full colour); the three lights get the levels times this.
+ */
+export const LIGHT_SCALE = Math.PI;
 /** The least the strips give while on, so a noon floor is a little brighter than a 06:30 one rather than identical. */
 export const STRIPS_MIN = 0.3;
 
@@ -161,13 +168,13 @@ export function createLighting(theme: ThemeName): Lighting {
   const setTime = (minute: number | null, strips: boolean): LightState => {
     const L = lightLevels(minute, strips);
     sun.position.copy(centre).addScaledVector(_dir.set(L.dir[0], L.dir[1], L.dir[2]), radius * 2);
-    sun.intensity = L.sun;
+    sun.intensity = L.sun * LIGHT_SCALE;
     sun.color.lerpColors(SUN_LOW, SUN_NOON, Math.min(1, L.elev * 1.6));
     sun.visible = !L.night;
     // A dark theme's sky is dusk-like even at noon, so its sky light is dimmer.
-    hemi.intensity = L.sky * (themeName === "dark" ? 0.55 : 1);
+    hemi.intensity = L.sky * LIGHT_SCALE * (themeName === "dark" ? 0.55 : 1);
     hemi.color.lerpColors(NIGHT_SKY_LIGHT, DAY_SKY_LIGHT, L.daylight);
-    interior.intensity = L.interior;
+    interior.intensity = L.interior * LIGHT_SCALE;
     interior.color.copy(STRIP_WHITE).lerp(SUN_LOW, L.dusk * 0.2);
     return { ...L, strips };
   };

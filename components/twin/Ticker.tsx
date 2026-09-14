@@ -13,7 +13,7 @@ interface Props {
   onSeek: (t: number) => void;
 }
 
-/** The last few ticker lines at or before t; clicking one selects its entity and seeks to it. */
+/** The last few ticker lines at or before t; each is a button (a keyboard reaches it) that selects its entity or seeks to it. */
 export default function Ticker({ playback, t, lines = 5, onSelect, onSeek }: Props) {
   const times = useMemo(() => Float64Array.from(playback.ticker, (e) => e.t), [playback]);
   const end = upperBound(times, t);
@@ -25,17 +25,18 @@ export default function Ticker({ playback, t, lines = 5, onSelect, onSeek }: Pro
     <div className="twin-overlay twin-ticker" aria-live="polite">
       <ol>
         {shown.map((e, i) => (
-          <li
-            key={e.ev}
-            className={`s${e.severity}${i === 0 ? " latest" : ""}`}
-            onClick={() => {
-              if (e.entity >= 0) onSelect(e.entity);
-              else onSeek(e.t);
-            }}
-            title={e.entity >= 0 ? "Select" : "Seek to this event"}
-          >
-            <time>{dayOf(e.t) === day ? clockOf(e.t) : `d${dayOf(e.t) + 1} ${clockOf(e.t)}`}</time>
-            <span>{e.text}</span>
+          <li key={e.ev} className={`s${e.severity}${i === 0 ? " latest" : ""}`}>
+            <button
+              type="button"
+              onClick={() => {
+                if (e.entity >= 0) onSelect(e.entity);
+                else onSeek(e.t);
+              }}
+              title={e.entity >= 0 ? "Select" : "Seek to this event"}
+            >
+              <time>{dayOf(e.t) === day ? clockOf(e.t) : `d${dayOf(e.t) + 1} ${clockOf(e.t)}`}</time>
+              <span>{e.text}</span>
+            </button>
           </li>
         ))}
       </ol>
